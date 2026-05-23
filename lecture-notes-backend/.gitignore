@@ -1,0 +1,6 @@
+node_modules/
+.env
+backups/
+uploads/
+recovered_transcript.txt
+temp_audio_*
