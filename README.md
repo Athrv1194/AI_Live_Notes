@@ -21,12 +21,16 @@ AI Live Notes is an advanced application that captures live audio and (optionall
 
 ## ✨ Features
 
-- 🎙️ **Live Audio Transcription**: Uses the `whisper-large-v3` model via Groq API to accurately transcribe spoken audio (supporting webm, wav, mp3, m4a up to 50MB).
+- 🎙️ **Live Audio Transcription**: Uses the `whisper-large-v3` model via Groq API to accurately transcribe spoken audio.
 - 👁️ **Vision Integration (Optional)**: Automatically incorporates screenshots taken during the lecture to provide context to the generated notes.
 - 🧠 **Smart Chunking**: Automatically chunks very long transcripts (~6000 characters per chunk) to reliably circumvent rate limits and token limitations without losing context.
+- 🎛️ **Customizable Detail Levels**: Instruct the AI to generate either "highly detailed", "brief", or "Q&A format" notes.
+- 📊 **Dashboard & Statistics**: A dedicated dashboard providing an overview of your total sessions, hours recorded, average notes length, and recent history.
+- 🔍 **Advanced Search & History**: Easily search through past notes by keyword, or browse them chronologically using the Timeline History modal.
+- 📁 **Session Management**: Auto-saves transcripts and notes locally. You can easily retrieve, review, or delete old sessions via the 'My Notes' or 'Dashboard' views.
+- 📄 **Infinite PDF Export**: A robust PDF export engine built on the native browser print API, guaranteeing infinite page length with selectable, searchable text (no blurry canvas images!).
+- 🎨 **Beautiful & Dynamic UI**: A meticulously crafted interface featuring a calming cream and dark panel aesthetic, smooth transitions, Mermaid diagram rendering, and LaTeX math formatting.
 - 🛡️ **Auto-Retry & Rate Limit Handling**: Implements a robust `generateWithRetry` strategy to gracefully handle 429 Too Many Requests errors.
-- 🎛️ **Customizable Detail Levels**: Instruct the AI to generate either "highly detailed and comprehensive" notes or "extremely concise one-liner bullet points".
-- 📊 **Mermaid Diagrams**: Visually represent complex relationships and processes using Mermaid JS embedded right in the markdown output.
 - 🌍 **Multilingual Support**: Automatically translates Hindi/Hinglish content into formal, academic English.
 - 💾 **Session Backups**: Real-time caching of ongoing transcripts into a local `backups/` directory to prevent data loss.
 
