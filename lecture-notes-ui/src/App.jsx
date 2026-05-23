@@ -21,7 +21,7 @@ const Mermaid = ({ chart }) => {
 
     mermaid.initialize({
       startOnLoad: false,
-      theme: 'dark',
+      theme: 'default',
       securityLevel: 'loose',
       suppressErrorAlerts: true // Disable annoying browser alerts for errors
     });
@@ -81,7 +81,7 @@ const App = () => {
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
   const [audioProgressText, setAudioProgressText] = useState('');
   const [noteDetailLevel, setNoteDetailLevel] = useState('detailed');
-  const [isVisionEnabled] = useState(false);
+  const [isVisionEnabled, setIsVisionEnabled] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
 
@@ -991,7 +991,18 @@ const App = () => {
             {/* Live Transcript Area */}
             <div className="flex-1 bg-card rounded-2xl p-6 shadow-md border border-[#e6dac3] flex flex-col relative min-h-0">
               <div className="flex justify-between items-center mb-4 pb-4 border-b border-gray-200">
-                <h2 className="text-2xl font-serif font-bold text-gray-900">Live Transcript</h2>
+                <div className="flex items-center gap-4">
+                  <h2 className="text-2xl font-serif font-bold text-gray-900">Live Transcript</h2>
+                  <label className="flex items-center gap-2 cursor-pointer mt-1">
+                    <input 
+                      type="checkbox" 
+                      checked={isVisionEnabled}
+                      onChange={(e) => setIsVisionEnabled(e.target.checked)}
+                      className="w-4 h-4 text-accent border-gray-300 rounded focus:ring-accent"
+                    />
+                    <span className="text-sm font-semibold text-gray-600 flex items-center gap-1"><MonitorUp size={14}/> Vision Integration</span>
+                  </label>
+                </div>
                 <div className="flex items-center gap-3">
                   {isProcessingAudio && (
                     <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full flex items-center gap-2 animate-pulse">
