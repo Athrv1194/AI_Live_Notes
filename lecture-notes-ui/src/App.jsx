@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Mic, MicOff, FileText, Loader2, Upload, Download, ScreenShare, ScreenShareOff, Trash2, LayoutGrid, Search, Server, MonitorUp, Share2, StopCircle, MessageSquare, Zap, RotateCcw, Radio, Sparkles } from 'lucide-react';
 import mermaid from 'mermaid';
@@ -84,6 +84,7 @@ const App = () => {
   const [isVisionEnabled, setIsVisionEnabled] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
+  const [captureError, setCaptureError] = useState('');
 
   // New State for Persistence and User Profile
   const [sessions, setSessions] = useState([]);
@@ -417,9 +418,11 @@ const App = () => {
       const data = await response.json();
       if (data.text && data.text.trim()) {
         setTranscript((prev) => prev + (prev ? ' ' : '') + data.text.trim());
+        setCaptureError(''); // Clear error on success
       }
     } catch (error) {
       console.error("Error transcribing system audio chunk:", error);
+      setCaptureError("API Error: Rate limit exceeded or network issue.");
     }
   };
 
@@ -804,6 +807,77 @@ const App = () => {
 
 
 
+  const memoizedMarkdownRender = useMemo(() => {
+    return (
+      <div className="prose prose-sm prose-stone max-w-none">
+        <ReactMarkdown
+          components={{
+            code({ inline, className, children, ...props }) {
+              const match = /language-(\w+)/.exec(className || '')
+              if (!inline && match && match[1] === 'mermaid') {
+                return <Mermaid chart={String(children).replace(/\n$/, '')} />
+              }
+              return <code className={className} {...props}>{children}</code>
+            },
+            h2({children}) {
+               return <div className="mt-8 mb-4 border-b border-gray-200 pb-2"><span className="text-[10px] font-bold tracking-widest text-accent uppercase mb-1 block">Topic</span><h2 className="text-xl font-serif font-bold text-gray-900 m-0">{children}</h2></div>
+            },
+            h3({children}) {
+                // Extract text to check if it's a Q&A question
+                let text = '';
+                React.Children.forEach(children, child => {
+                  if (typeof child === 'string') text += child;
+                });
+                
+                if (text.trim().startsWith('Q:')) {
+                  return (
+                    <div className="mt-8 mb-2 p-5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl shadow-sm text-blue-900 font-bold flex items-start gap-3">
+                      <div className="bg-blue-500 text-white w-7 h-7 rounded-full flex items-center justify-center text-xs flex-shrink-0 mt-0.5 shadow-inner">
+                        Q
+                      </div>
+                      <div className="text-lg leading-snug pt-0.5">{text.replace(/^Q:\s*/, '')}</div>
+                    </div>
+                  );
+                }
+                return <h3 className="text-[11px] font-bold tracking-widest text-accent uppercase mt-6 mb-3">{children}</h3>
+            },
+            blockquote({children}) {
+              return (
+                <div className="mb-8 ml-4 p-5 bg-white border-l-4 border-emerald-400 rounded-r-2xl rounded-bl-2xl shadow-md text-gray-700 flex items-start gap-4 relative">
+                  <div className="absolute -left-[18px] top-5 bg-emerald-400 text-white w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold border-4 border-[#fdfbf7] shadow-sm">
+                    A
+                  </div>
+                  <div className="pl-2 leading-relaxed w-full text-sm">
+                    {children}
+                  </div>
+                </div>
+              );
+            },
+            ul({children}) {
+              return <div className="flex flex-col gap-3 my-4">{children}</div>
+            },
+            li({children}) {
+               return (
+                 <div className="bg-[#f8f5ee] border border-[#e6dac3] rounded-xl p-4 flex gap-3 shadow-sm hover:shadow-md transition-shadow">
+                   <div className="mt-0.5">
+                     <div className="w-6 h-6 rounded-full bg-gradient-to-br from-emerald-100 to-emerald-200 border border-emerald-300 flex items-center justify-center text-emerald-700 shadow-inner">
+                       <Sparkles size={12} />
+                     </div>
+                   </div>
+                   <div className="flex-1 text-sm text-gray-800 leading-relaxed">
+                     {children}
+                   </div>
+                 </div>
+               )
+            }
+          }}
+        >
+          {notes}
+        </ReactMarkdown>
+      </div>
+    );
+  }, [notes]);
+
   return (
     <div className="flex min-h-screen bg-cream font-sans h-screen overflow-hidden">
       
@@ -1002,6 +1076,11 @@ const App = () => {
                     />
                     <span className="text-sm font-semibold text-gray-600 flex items-center gap-1"><MonitorUp size={14}/> Vision Integration</span>
                   </label>
+                  {captureError && (
+                    <span className="text-xs font-semibold text-red-500 bg-red-50 px-2 py-1 rounded-md ml-2 animate-pulse">
+                      {captureError}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-3">
                   {isProcessingAudio && (
@@ -1105,72 +1184,7 @@ const App = () => {
                    onChange={(e) => setNotes(e.target.value)}
                  />
                ) : (
-                 <div className="prose prose-sm prose-stone max-w-none">
-                   <ReactMarkdown
-                     components={{
-                       code({ inline, className, children, ...props }) {
-                         const match = /language-(\w+)/.exec(className || '')
-                         if (!inline && match && match[1] === 'mermaid') {
-                           return <Mermaid chart={String(children).replace(/\n$/, '')} />
-                         }
-                         return <code className={className} {...props}>{children}</code>
-                       },
-                       h2({children}) {
-                          return <div className="mt-8 mb-4 border-b border-gray-200 pb-2"><span className="text-[10px] font-bold tracking-widest text-accent uppercase mb-1 block">Topic</span><h2 className="text-xl font-serif font-bold text-gray-900 m-0">{children}</h2></div>
-                       },
-                       h3({children}) {
-                           // Extract text to check if it's a Q&A question
-                           let text = '';
-                           React.Children.forEach(children, child => {
-                             if (typeof child === 'string') text += child;
-                           });
-                           
-                           if (text.trim().startsWith('Q:')) {
-                             return (
-                               <div className="mt-8 mb-2 p-5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl shadow-sm text-blue-900 font-bold flex items-start gap-3">
-                                 <div className="bg-blue-500 text-white w-7 h-7 rounded-full flex items-center justify-center text-xs flex-shrink-0 mt-0.5 shadow-inner">
-                                   Q
-                                 </div>
-                                 <div className="text-lg leading-snug pt-0.5">{text.replace(/^Q:\s*/, '')}</div>
-                               </div>
-                             );
-                           }
-                           return <h3 className="text-[11px] font-bold tracking-widest text-accent uppercase mt-6 mb-3">{children}</h3>
-                       },
-                       blockquote({children}) {
-                         return (
-                           <div className="mb-8 ml-4 p-5 bg-white border-l-4 border-emerald-400 rounded-r-2xl rounded-bl-2xl shadow-md text-gray-700 flex items-start gap-4 relative">
-                             <div className="absolute -left-[18px] top-5 bg-emerald-400 text-white w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold border-4 border-[#fdfbf7] shadow-sm">
-                               A
-                             </div>
-                             <div className="pl-2 leading-relaxed w-full text-sm">
-                               {children}
-                             </div>
-                           </div>
-                         );
-                       },
-                       ul({children}) {
-                         return <div className="flex flex-col gap-3 my-4">{children}</div>
-                       },
-                       li({children}) {
-                          return (
-                            <div className="bg-[#f8f5ee] border border-[#e6dac3] rounded-xl p-4 flex gap-3 shadow-sm hover:shadow-md transition-shadow">
-                              <div className="mt-0.5">
-                                <div className="w-6 h-6 rounded-full bg-gradient-to-br from-emerald-100 to-emerald-200 border border-emerald-300 flex items-center justify-center text-emerald-700 shadow-inner">
-                                  <Sparkles size={12} />
-                                </div>
-                              </div>
-                              <div className="flex-1 text-sm text-gray-800 leading-relaxed">
-                                {children}
-                              </div>
-                            </div>
-                          )
-                       }
-                     }}
-                   >
-                     {notes}
-                   </ReactMarkdown>
-                 </div>
+                  memoizedMarkdownRender
                )}
             </div>
 
