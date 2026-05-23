@@ -1,7 +1,6 @@
-import React from 'react';
 import { X, Server, Clock, ArrowRight, Activity } from 'lucide-react';
 
-const HistoryModal = ({ isOpen, onClose, sessions = [], onLoadTranscript, onDeleteSession }) => {
+const HistoryModal = ({ isOpen, onClose, sessions = [], onLoadTranscript }) => {
   if (!isOpen) return null;
 
   return (
@@ -36,7 +35,7 @@ const HistoryModal = ({ isOpen, onClose, sessions = [], onLoadTranscript, onDele
           ) : (
             <div className="relative border-l-2 border-blue-200 ml-4 space-y-8">
               
-              {sessions.map((session, index) => (
+              {sessions.map((session) => (
                 <div key={session.id} className="relative pl-8 group">
                   {/* Timeline Dot */}
                   <div className="absolute -left-[9px] top-1.5 w-4 h-4 rounded-full bg-blue-500 border-4 border-[#fdfbf7] group-hover:scale-125 transition-transform shadow-sm"></div>

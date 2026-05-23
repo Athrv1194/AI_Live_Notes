@@ -1,5 +1,4 @@
-import React from 'react';
-import { X, FileText, Download, Calendar, ArrowRight, Trash2 } from 'lucide-react';
+import { X, FileText, Download, Trash2 } from 'lucide-react';
 
 const DocumentModal = ({ isOpen, onClose, sessions = [], onLoadTranscript, onDeleteSession }) => {
   if (!isOpen) return null;

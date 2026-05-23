@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { User, ArrowRight, X } from 'lucide-react';
 
 const NameModal = ({ isOpen, onSubmit, onClose, initialName = '' }) => {
@@ -6,6 +6,7 @@ const NameModal = ({ isOpen, onSubmit, onClose, initialName = '' }) => {
 
   useEffect(() => {
     if (isOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setName(initialName);
     }
   }, [isOpen, initialName]);

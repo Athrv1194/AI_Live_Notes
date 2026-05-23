@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { X, Search as SearchIcon, Calendar, FileText, Trash2 } from 'lucide-react';
 
 const SearchModal = ({ isOpen, onClose, sessions = [], onLoadTranscript, onDeleteSession }) => {

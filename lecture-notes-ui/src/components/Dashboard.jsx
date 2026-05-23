@@ -1,7 +1,6 @@
-import React from 'react';
 import { Clock, FileText, Activity, Search, Calendar, Trash2 } from 'lucide-react';
 
-const Dashboard = ({ onNavigate, sessions = [], username = 'User', onDeleteSession }) => {
+const Dashboard = ({ sessions = [], username = 'User', onDeleteSession }) => {
   // Compute Stats
   const totalSessions = sessions.length;
   
@@ -38,8 +37,7 @@ const Dashboard = ({ onNavigate, sessions = [], username = 'User', onDeleteSessi
 
           {/* Stats Row */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-card rounded-2xl p-6 shadow-sm border border-[#e6dac3] relative overflow-hidden">
-              <div className="absolute bottom-0 left-0 w-full h-1 bg-amber-500"></div>
+            <div className="bg-card rounded-2xl p-6 shadow-sm border border-[#e6dac3] border-b-4 border-b-amber-500 overflow-hidden">
               <div className="flex items-center gap-3 mb-4 text-amber-600">
                 <FileText size={20} />
                 <span className="text-xs font-bold tracking-widest uppercase">Total Sessions</span>
@@ -47,22 +45,20 @@ const Dashboard = ({ onNavigate, sessions = [], username = 'User', onDeleteSessi
               <span className="text-4xl font-serif font-bold text-gray-900">{totalSessions}</span>
             </div>
             
-            <div className="bg-card rounded-2xl p-6 shadow-sm border border-[#e6dac3] relative overflow-hidden">
-              <div className="absolute bottom-0 left-0 w-full h-1 bg-blue-500"></div>
+            <div className="bg-card rounded-2xl p-6 shadow-sm border border-[#e6dac3] border-b-4 border-b-blue-500 overflow-hidden">
               <div className="flex items-center gap-3 mb-4 text-blue-600">
                 <Clock size={20} />
                 <span className="text-xs font-bold tracking-widest uppercase">Hours Recorded</span>
               </div>
-              <span className="text-4xl font-serif font-bold text-gray-900">{totalHours}<span className="text-xl text-gray-500 ml-1">h</span></span>
+              <span className="text-4xl font-serif font-bold text-gray-900 flex items-baseline">{totalHours}<span className="text-xl text-gray-500 ml-1">h</span></span>
             </div>
 
-            <div className="bg-card rounded-2xl p-6 shadow-sm border border-[#e6dac3] relative overflow-hidden">
-              <div className="absolute bottom-0 left-0 w-full h-1 bg-emerald-500"></div>
+            <div className="bg-card rounded-2xl p-6 shadow-sm border border-[#e6dac3] border-b-4 border-b-emerald-500 overflow-hidden">
               <div className="flex items-center gap-3 mb-4 text-emerald-600">
                 <Activity size={20} />
                 <span className="text-xs font-bold tracking-widest uppercase">Avg Notes Length</span>
               </div>
-              <span className="text-4xl font-serif font-bold text-gray-900">{avgWords}<span className="text-xl text-gray-500 ml-1">words</span></span>
+              <span className="text-4xl font-serif font-bold text-gray-900 flex items-baseline">{avgWords}<span className="text-xl text-gray-500 ml-1">words</span></span>
             </div>
           </div>
 

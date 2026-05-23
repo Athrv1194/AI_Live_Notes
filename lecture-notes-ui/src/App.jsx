@@ -1,7 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Mic, MicOff, FileText, Loader2, Upload, Download, ScreenShare, ScreenShareOff, Trash2, LayoutGrid, Search, Server, Sun, MonitorUp, Share2, StopCircle, MessageSquare, Clock, List, FileCheck, Zap, RotateCcw, Radio, Sparkles } from 'lucide-react';
-import html2pdf from 'html2pdf.js';
+import { Mic, MicOff, FileText, Loader2, Upload, Download, ScreenShare, ScreenShareOff, Trash2, LayoutGrid, Search, Server, MonitorUp, Share2, StopCircle, MessageSquare, Zap, RotateCcw, Radio, Sparkles } from 'lucide-react';
 import mermaid from 'mermaid';
 import Dashboard from './components/Dashboard';
 import DocumentModal from './components/DocumentModal';
@@ -17,6 +16,7 @@ const Mermaid = ({ chart }) => {
   const [error, setError] = useState(false);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setError(false);
 
     mermaid.initialize({
@@ -77,11 +77,11 @@ const App = () => {
   const [transcript, setTranscript] = useState('');
   const [notes, setNotes] = useState('### Your AI notes will appear here...');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [generationStatus, setGenerationStatus] = useState('');
+  const [, setGenerationStatus] = useState('');
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
   const [audioProgressText, setAudioProgressText] = useState('');
   const [noteDetailLevel, setNoteDetailLevel] = useState('detailed');
-  const [isVisionEnabled, setIsVisionEnabled] = useState(false);
+  const [isVisionEnabled] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
 
@@ -165,7 +165,7 @@ const App = () => {
     return () => clearTimeout(timer);
   }, [transcript, notes, recordingTime]);
 
-  const handleStartCapture = async () => null;
+
 
   useEffect(() => {
     // Initialize Web Speech API
@@ -177,14 +177,11 @@ const App = () => {
       recognitionRef.current.interimResults = true;
 
       recognitionRef.current.onresult = (event) => {
-        let currentInterim = '';
         let currentFinal = '';
 
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
             currentFinal += event.results[i][0].transcript + ' ';
-          } else {
-            currentInterim += event.results[i][0].transcript;
           }
         }
 
@@ -707,7 +704,7 @@ const App = () => {
     }, 100);
   };
 
-  const generateNotes = async () => {
+  const generateNotes = useCallback(async () => {
     if (isGeneratingRef.current) {
       console.log("Generation already in progress, skipping.");
       return;
@@ -783,7 +780,7 @@ const App = () => {
       isGeneratingRef.current = false;
       setGenerationStatus('');
     }
-  };
+  }, [transcript, noteDetailLevel, isVisionEnabled]);
 
   const handleClearTranscript = () => {
     if (window.confirm("Are you sure you want to clear the transcript? This cannot be undone.")) {
@@ -791,13 +788,6 @@ const App = () => {
       lastProcessedIndex.current = 0;
       visionFramesRef.current = [];
       sessionIdRef.current = `session_${Date.now()}`; // Start a fresh session ID
-    }
-  };
-
-  const handleClearNotes = () => {
-    if (window.confirm("Are you sure you want to clear your generated notes?")) {
-      setNotes('### Your AI notes will appear here...');
-      lastProcessedIndex.current = 0; // Reset index so they can regenerate notes from the existing transcript if they want
     }
   };
 
@@ -865,7 +855,6 @@ const App = () => {
         
         {currentView === 'dashboard' ? (
           <Dashboard 
-            onNavigate={setCurrentView} 
             sessions={sessions}
             username={username}
             onDeleteSession={deleteSession}
@@ -1030,9 +1019,8 @@ const App = () => {
             </div>
 
             {/* Stats Row */}
-            <div className="grid grid-cols-3 gap-4">
-              <div className="bg-card rounded-2xl p-5 shadow-sm border border-[#e6dac3] relative overflow-hidden">
-                <div className="absolute bottom-0 left-0 w-full h-1 bg-emerald-600"></div>
+            <div className="grid grid-cols-3 gap-4 mb-6">
+              <div className="bg-card rounded-2xl p-5 shadow-sm border border-[#e6dac3] border-b-4 border-b-indigo-500 overflow-hidden">
                 <div className="flex justify-between items-start mb-2">
                   <span className="text-4xl font-serif font-bold text-gray-900">
                     {transcript ? transcript.trim().split(/\s+/).filter(w => w.length > 0).length : 0}
@@ -1045,8 +1033,7 @@ const App = () => {
                 </div>
                 <div className="text-[11px] font-bold tracking-widest text-gray-500 uppercase">Words Captured</div>
               </div>
-              <div className="bg-card rounded-2xl p-5 shadow-sm border border-[#e6dac3] relative overflow-hidden">
-                <div className="absolute bottom-0 left-0 w-full h-1 bg-amber-500"></div>
+              <div className="bg-card rounded-2xl p-5 shadow-sm border border-[#e6dac3] border-b-4 border-b-amber-500 overflow-hidden">
                 <div className="flex justify-between items-start mb-2">
                   <span className="text-4xl font-serif font-bold text-gray-900">
                     {notes.includes('### Your AI notes') ? 0 : (notes.split('## ').length - 1 || 0)}
@@ -1057,11 +1044,10 @@ const App = () => {
                 </div>
                 <div className="text-[11px] font-bold tracking-widest text-gray-500 uppercase">Note Sections</div>
               </div>
-              <div className="bg-card rounded-2xl p-5 shadow-sm border border-[#e6dac3] relative overflow-hidden">
-                <div className="absolute bottom-0 left-0 w-full h-1 bg-blue-500"></div>
+              <div className="bg-card rounded-2xl p-5 shadow-sm border border-[#e6dac3] border-b-4 border-b-blue-500 overflow-hidden">
                 <div className="flex justify-between items-start mb-2">
                   <span className="text-4xl font-serif font-bold text-gray-900 flex items-baseline">
-                    {Math.floor(recordingTime / 60)}<span className="text-lg text-gray-500 ml-1">m</span>
+                    {Math.floor(recordingTime / 60)}<span className="text-lg text-gray-500">m</span>
                   </span>
                 </div>
                 <div className="text-[11px] font-bold tracking-widest text-gray-500 uppercase">Duration</div>
@@ -1111,7 +1097,7 @@ const App = () => {
                  <div className="prose prose-sm prose-stone max-w-none">
                    <ReactMarkdown
                      components={{
-                       code({ node, inline, className, children, ...props }) {
+                       code({ inline, className, children, ...props }) {
                          const match = /language-(\w+)/.exec(className || '')
                          if (!inline && match && match[1] === 'mermaid') {
                            return <Mermaid chart={String(children).replace(/\n$/, '')} />
