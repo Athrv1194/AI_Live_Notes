@@ -1,8 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Mic, MicOff, FileText, Loader2, Upload, Download, ScreenShare, ScreenShareOff, Trash2 } from 'lucide-react';
+import { Mic, MicOff, FileText, Loader2, Upload, Download, ScreenShare, ScreenShareOff, Trash2, LayoutGrid, Search, Server, Sun, MonitorUp, Share2, StopCircle, MessageSquare, Clock, List, FileCheck, Zap, RotateCcw, Radio, Sparkles } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import mermaid from 'mermaid';
+import Dashboard from './components/Dashboard';
+import DocumentModal from './components/DocumentModal';
+import SearchModal from './components/SearchModal';
+import HistoryModal from './components/HistoryModal';
+import NameModal from './components/NameModal';
+import './App.css';
 
 // Custom Mermaid component
 // Custom Mermaid component with robust error handling and elegant fallback
@@ -62,6 +68,10 @@ const Mermaid = ({ chart }) => {
 };
 
 const App = () => {
+  const [currentView, setCurrentView] = useState('live');
+  const [isDocumentModalOpen, setIsDocumentModalOpen] = useState(false);
+  const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isSystemCapturing, setIsSystemCapturing] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -72,6 +82,13 @@ const App = () => {
   const [audioProgressText, setAudioProgressText] = useState('');
   const [noteDetailLevel, setNoteDetailLevel] = useState('detailed');
   const [isVisionEnabled, setIsVisionEnabled] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [isEditing, setIsEditing] = useState(false);
+
+  // New State for Persistence and User Profile
+  const [sessions, setSessions] = useState([]);
+  const [username, setUsername] = useState(localStorage.getItem('username') || '');
+  const [isNameModalOpen, setIsNameModalOpen] = useState(!localStorage.getItem('username'));
 
   const recognitionRef = useRef(null);
   const lastProcessedIndex = useRef(0);
@@ -88,6 +105,67 @@ const App = () => {
   const captureCanvasRef = useRef(null);
   const visionFramesRef = useRef([]);
   const visionIntervalRef = useRef(null);
+
+  // Fetch sessions on mount
+  useEffect(() => {
+    fetch('http://localhost:3000/api/sessions')
+      .then(res => res.json())
+      .then(data => setSessions(data))
+      .catch(err => console.error("Failed to fetch sessions:", err));
+  }, []);
+
+  const deleteSession = async (id) => {
+    try {
+      const res = await fetch(`http://localhost:3000/api/sessions/${id}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        setSessions(prev => prev.filter(s => s.id !== id));
+      }
+    } catch (err) {
+      console.error("Failed to delete session:", err);
+    }
+  };
+
+  // Auto-save logic
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      // Don't save empty/default states
+      if (transcript.trim() === '' && notes.includes('### Your AI notes')) return;
+      
+      let title = 'Untitled Session';
+      if (!notes.includes('### Your AI notes')) {
+        const titleMatch = notes.match(/#+\s+([^\n]+)/);
+        if (titleMatch && titleMatch[1]) {
+          title = titleMatch[1].trim();
+        }
+      }
+
+      fetch('http://localhost:3000/api/sessions/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: sessionIdRef.current,
+          title: title,
+          transcript: transcript,
+          notes: notes,
+          duration: `${Math.floor(recordingTime / 60)}m ${recordingTime % 60}s`,
+          words: transcript.split(/\s+/).filter(w => w.length > 0).length,
+          date: new Date().toISOString()
+        })
+      }).then(() => {
+        // Fetch sessions again to update modals
+        fetch('http://localhost:3000/api/sessions')
+          .then(res => res.json())
+          .then(data => setSessions(data))
+          .catch(err => console.error(err));
+      }).catch(err => console.error(err));
+    }, 5000); // 5 seconds debounce
+
+    return () => clearTimeout(timer);
+  }, [transcript, notes, recordingTime]);
+
+  const handleStartCapture = async () => null;
 
   useEffect(() => {
     // Initialize Web Speech API
@@ -126,6 +204,24 @@ const App = () => {
     }
   }, []);
 
+  // Timer logic
+  useEffect(() => {
+    let timerInterval;
+    if (isRecording || isSystemCapturing) {
+      timerInterval = setInterval(() => {
+        setRecordingTime(prev => prev + 1);
+      }, 1000);
+    } else {
+      clearInterval(timerInterval);
+    }
+    return () => clearInterval(timerInterval);
+  }, [isRecording, isSystemCapturing]);
+
+  const formatTime = (seconds) => {
+    const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+    const s = (seconds % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
 
   useEffect(() => {
     let intervalId;
@@ -525,56 +621,90 @@ const App = () => {
   };
 
   const handleDownloadPDF = async () => {
-    const originalElement = document.getElementById('notes-content');
-    if (!originalElement) return;
+    const element = document.getElementById('notes-content');
+    if (!element) return;
+    
+    // We only want to print the rendered HTML, so temporarily hide the textarea if editing
+    const wasEditing = isEditing;
+    if (wasEditing) setIsEditing(false);
+    
+    // Slight delay to ensure DOM updates if we just exited edit mode
+    setTimeout(() => {
+      let filename = `AI_Notes_${new Date().toISOString().slice(0,10)}`;
+      if (!notes.includes('### Your AI notes')) {
+        const titleMatch = notes.match(/#+\s+([^\n]+)/);
+        if (titleMatch && titleMatch[1]) {
+          const sanitizedTitle = titleMatch[1].trim().replace(/[^a-zA-Z0-9 -]/g, '').replace(/\s+/g, '_').substring(0, 50);
+          if (sanitizedTitle) {
+            filename = sanitizedTitle;
+          }
+        }
+      }
 
-    // Documents over ~20 pages will crash html2canvas due to the browser's hard 32,767 pixel height limit for Canvas elements.
-    // Instead, we extract the raw rendered HTML and use the browser's native PDF engine which handles infinite pages instantly.
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) {
-      alert("Please allow popups to download the PDF.");
-      return;
-    }
+      const printWindow = window.open('', '_blank');
+      if (!printWindow) {
+        alert("Please allow popups to generate the PDF.");
+        if (wasEditing) setIsEditing(true);
+        return;
+      }
+      
+      // Get all style elements from current document to preserve Tailwind + Custom CSS
+      const styles = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
+        .map(el => el.outerHTML)
+        .join('\n');
 
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>Lecture_Notes_${new Date().toLocaleDateString().replace(/\//g, '-')}</title>
-          <style>
+      const printStyles = `
+        <style>
+          @media print {
             @page { margin: 20mm; }
             body { 
-              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
-              color: #111827; 
-              line-height: 1.6; 
-              max-width: 900px;
-              margin: 0 auto;
+              -webkit-print-color-adjust: exact !important; 
+              print-color-adjust: exact !important; 
+              background-color: white !important;
             }
-            h1, h2, h3, h4 { color: #000; margin-top: 1.5em; margin-bottom: 0.5em; border-bottom: 1px solid #eee; padding-bottom: 0.3em; }
-            p { margin-bottom: 1em; }
-            ul, ol { margin-bottom: 1em; padding-left: 2em; }
-            li { margin-bottom: 0.5em; }
-            pre { background: #f3f4f6; padding: 15px; border-radius: 8px; white-space: pre-wrap; word-wrap: break-word; }
-            code { font-family: monospace; background: #f3f4f6; padding: 2px 5px; border-radius: 4px; font-size: 0.9em; }
-            img, svg { max-width: 100%; height: auto; display: block; margin: 1em 0; page-break-inside: avoid; }
-            hr { border: none; border-top: 1px solid #e5e7eb; margin: 2em 0; }
-            
-            /* Hide the cursor blinking if it was copied over */
-            .blinking-cursor { display: none !important; }
-          </style>
-        </head>
-        <body>
-          ${originalElement.innerHTML}
-        </body>
-      </html>
-    `);
+            #print-container { overflow: visible !important; height: auto !important; }
+            h2, h3 { page-break-after: avoid; }
+            img, svg, .mermaid { page-break-inside: avoid; }
+            li { page-break-inside: avoid; margin-bottom: 12px; }
+          }
+          body {
+            background-color: white;
+            font-family: 'Inter', system-ui, sans-serif;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+          }
+        </style>
+      `;
 
-    printWindow.document.close();
-    printWindow.focus();
-
-    // Give the browser 500ms to render the SVGs and styles before triggering the PDF dialog
-    setTimeout(() => {
-      printWindow.print();
-    }, 500);
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>${filename}</title>
+            <meta charset="utf-8">
+            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap" rel="stylesheet">
+            ${styles}
+            ${printStyles}
+          </head>
+          <body>
+            <div id="print-container">
+              ${element.innerHTML}
+            </div>
+          </body>
+        </html>
+      `);
+      
+      printWindow.document.close();
+      
+      printWindow.onload = () => {
+        printWindow.focus();
+        printWindow.print();
+        setTimeout(() => printWindow.close(), 500);
+      };
+      
+      if (wasEditing) setIsEditing(true);
+    }, 100);
   };
 
   const generateNotes = async () => {
@@ -660,6 +790,7 @@ const App = () => {
       setTranscript('');
       lastProcessedIndex.current = 0;
       visionFramesRef.current = [];
+      sessionIdRef.current = `session_${Date.now()}`; // Start a fresh session ID
     }
   };
 
@@ -674,195 +805,473 @@ const App = () => {
     savedGenerateNotes.current = generateNotes;
   }, [generateNotes]);
 
-  const handleDetailLevelChange = (e) => {
-    setNoteDetailLevel(e.target.value);
+  const handleDetailLevelClick = (level) => {
+    setNoteDetailLevel(level);
     // Reset everything so the user can regenerate all notes with the new style
     lastProcessedIndex.current = 0;
     setNotes('### Your AI notes will appear here...');
   };
 
+
+
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-8 font-sans">
-      <header className="mb-8 flex justify-between items-center">
-        <h1 className="text-3xl font-bold flex items-center gap-2">
-          <FileText className="text-blue-400" /> Live AI Notes
-        </h1>
-        <div className="flex gap-4">
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-2 px-6 py-3 rounded-full font-bold transition-all bg-gray-700 hover:bg-gray-600 text-white"
-          >
-            <Upload size={20} /> Upload Transcript (.txt, .md)
-          </button>
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileUpload}
-            accept=".txt,.md"
-            className="hidden"
-          />
-          <button
-            onClick={() => audioFileInputRef.current?.click()}
-            className="flex items-center gap-2 px-6 py-3 rounded-full font-bold transition-all bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white shadow-lg shadow-emerald-500/20"
-          >
-            <Upload size={20} /> Upload Audio (.mp3, .wav, ...)
-          </button>
-          <input
-            type="file"
-            ref={audioFileInputRef}
-            onChange={handleAudioFileUpload}
-            accept="audio/*"
-            className="hidden"
-          />
-          <button
-            onClick={toggleSystemCapture}
-            className={`flex items-center gap-2 px-6 py-3 rounded-full font-bold transition-all ${isSystemCapturing
-                ? 'bg-red-500 hover:bg-red-600 animate-pulse'
-                : 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 shadow-lg shadow-indigo-500/20'
-              }`}
-          >
-            {isSystemCapturing ? <><ScreenShareOff size={20} /> Stop Zoom/System</> : <><ScreenShare size={20} /> Capture Zoom/System</>}
-          </button>
-          <button
-            onClick={toggleRecording}
-            className={`flex items-center gap-2 px-6 py-3 rounded-full font-bold transition-all ${isRecording ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-600 hover:bg-blue-700'
-              }`}
-          >
-            {isRecording ? <><MicOff size={20} /> Stop Mic</> : <><Mic size={20} /> Capture Mic</>}
-          </button>
-        </div>
-      </header>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 h-[75vh]">
-        {/* Left Column: Transcript */}
-        <div className="bg-gray-800 p-6 rounded-xl border border-gray-700 flex flex-col">
-          <div className="flex justify-between items-center mb-4">
-            <div className="flex items-center gap-3">
-              <h2 className="text-xl font-semibold text-gray-300 flex items-center gap-2">
-                Live Transcript
-                <span className="text-xs bg-gray-700 text-gray-300 px-2 py-1 rounded-full font-mono">
-                  {transcript.trim().split(/\s+/).filter(w => w.length > 0).length} words
-                </span>
-              </h2>
-              {transcript && (
-                <button
-                  onClick={handleClearTranscript}
-                  title="Clear Transcript"
-                  className="p-1.5 rounded-md text-gray-400 hover:text-red-400 hover:bg-gray-700/50 transition-colors"
-                >
-                  <Trash2 size={16} />
-                </button>
-              )}
-            </div>
+    <div className="flex min-h-screen bg-cream font-sans h-screen overflow-hidden">
+      
+      {/* Left Sidebar */}
+      <aside className="w-[72px] bg-panel flex flex-col items-center py-6 justify-between flex-shrink-0 z-20">
+        <div className="flex flex-col items-center gap-8 w-full">
+          {/* Logo / Mic */}
+          <div onClick={toggleRecording} className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-lg cursor-pointer transition-transform hover:scale-105 ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-accent'}`}>
+            {isRecording ? <MicOff size={24} /> : <Mic size={24} />}
           </div>
-          <div className="flex-1 overflow-y-auto bg-gray-900/50 p-4 rounded-lg font-mono text-sm text-gray-400 whitespace-pre-wrap leading-relaxed">
-            {transcript || "Click 'Start Capture' and begin speaking, or click 'Upload File' to load a transcript..."}
-          </div>
-          <div className="flex flex-col gap-2 mt-4">
-            <div className="flex items-center space-x-2 bg-gray-900 border border-gray-800 rounded-lg p-2.5">
-              <input
-                type="checkbox"
-                id="vision-toggle"
-                checked={isVisionEnabled}
-                onChange={(e) => setIsVisionEnabled(e.target.checked)}
-                disabled={isSystemCapturing}
-                className="w-4 h-4 text-cyan-500 bg-gray-800 border-gray-700 rounded focus:ring-cyan-600 focus:ring-2"
-              />
-              <label htmlFor="vision-toggle" className="text-sm font-medium text-gray-300">
-                Enable AI Vision (Extracts slides & diagrams)
-              </label>
-            </div>
-
-            <button
-              onClick={generateNotes}
-              disabled={!transcript || isGenerating}
-              className={`w-full disabled:opacity-50 disabled:cursor-not-allowed py-3 rounded-lg font-bold flex flex-col justify-center items-center gap-1 transition-all ${isGenerating ? 'bg-emerald-800' : 'bg-emerald-600 hover:bg-emerald-700'}`}
-            >
-              <div className="flex items-center gap-2">
-                {isGenerating ? <><Loader2 className="animate-spin" /> Processing...</> : 'Generate Smart Notes Now'}
-              </div>
-              {isGenerating && generationStatus && (
-                <span className="text-xs text-emerald-300 animate-pulse font-normal tracking-wide">{generationStatus}</span>
-              )}
+          
+          <nav className="flex flex-col gap-6 w-full items-center mt-4">
+            <button onClick={() => setCurrentView('live')} className={`relative group transition-colors ${currentView === 'live' ? 'text-emerald-400' : 'text-gray-500 hover:text-white'}`}>
+              <Radio size={22} />
+              <span className="absolute left-14 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none transition-opacity z-50">Live Capture</span>
             </button>
+            <button onClick={() => setCurrentView('dashboard')} className={`relative group transition-colors ${currentView === 'dashboard' ? 'text-amber-400' : 'text-gray-500 hover:text-white'}`}>
+              <LayoutGrid size={22} />
+              <span className="absolute left-14 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none transition-opacity z-50">Dashboard</span>
+            </button>
+            <button onClick={() => setIsDocumentModalOpen(true)} className="text-gray-500 hover:text-white transition-colors relative group">
+              <FileText size={22} />
+              <span className="absolute left-14 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none transition-opacity z-50">My Notes</span>
+            </button>
+            <button onClick={() => setIsSearchModalOpen(true)} className="text-gray-500 hover:text-white transition-colors relative group">
+              <Search size={22} />
+              <span className="absolute left-14 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none transition-opacity z-50">Search</span>
+            </button>
+            <button onClick={() => setIsHistoryModalOpen(true)} className="text-gray-500 hover:text-white transition-colors relative group">
+              <Server size={22} />
+              <span className="absolute left-14 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none transition-opacity z-50">History</span>
+            </button>
+          </nav>
+        </div>
+        
+        <div className="flex flex-col items-center gap-6">
+          <div 
+            onClick={() => setIsNameModalOpen(true)}
+            className="w-10 h-10 rounded-full bg-emerald-700 flex items-center justify-center text-white font-bold text-sm border-2 border-transparent hover:border-white cursor-pointer transition-all shadow-md"
+            title="Edit Profile"
+          >
+            {username ? username.substring(0, 2).toUpperCase() : 'AR'}
           </div>
         </div>
+      </aside>
 
-        {/* Right Column: AI Notes Area */}
-        <div className="bg-gray-800 p-6 rounded-xl border border-gray-700 flex flex-col">
-          <div className="flex justify-between items-center mb-4">
-            <div className="flex items-center gap-3">
-              <h2 className="text-xl font-semibold text-emerald-400 flex items-center gap-2">
-                Structured Study Notes
-              </h2>
-              {!notes.includes('### Your AI notes will appear here...') && (
-                <button
-                  onClick={handleClearNotes}
-                  title="Clear Notes"
-                  className="p-1.5 rounded-md text-gray-400 hover:text-red-400 hover:bg-gray-700/50 transition-colors"
-                >
-                  <Trash2 size={16} />
-                </button>
-              )}
-            </div>
-            <div className="flex gap-3">
-              <select
-                value={noteDetailLevel}
-                onChange={handleDetailLevelChange}
-                className="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg focus:ring-emerald-500 focus:border-emerald-500 block px-3 py-1.5"
-              >
-                <option value="detailed">Detailed Notes</option>
-                <option value="short">Short Bullet Points</option>
-              </select>
-              <button
-                onClick={handleDownloadPDF}
-                className="flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-200 transition-colors"
-              >
-                <Download size={16} /> Download PDF
-              </button>
-            </div>
-          </div>
-          <div id="notes-content" className="flex-1 overflow-y-auto bg-gray-900/50 p-6 rounded-lg prose prose-invert prose-emerald max-w-none">
-            <ReactMarkdown
-              components={{
-                code({ node, inline, className, children, ...props }) {
-                  const match = /language-(\w+)/.exec(className || '')
-                  if (!inline && match && match[1] === 'mermaid') {
-                    return <Mermaid chart={String(children).replace(/\n$/, '')} />
-                  }
-                  return <code className={className} {...props}>{children}</code>
+      {/* Main Layout Area */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        
+        {currentView === 'dashboard' ? (
+          <Dashboard 
+            onNavigate={setCurrentView} 
+            sessions={sessions}
+            username={username}
+            onDeleteSession={deleteSession}
+          />
+        ) : (
+          <>
+            {/* Top Header */}
+            <header className="h-[88px] px-8 flex items-center justify-between flex-shrink-0 bg-transparent border-b border-[#e6dac3] z-10">
+              <div className="flex items-center gap-4">
+                <h1 className="text-3xl font-serif font-bold text-gray-900 tracking-tight transition-colors">Live Capture</h1>
+              </div>
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={handleDownloadPDF}
+              className="flex items-center gap-2 px-4 py-2 bg-transparent hover:bg-gray-100/80 text-gray-700 border border-gray-300/80 rounded-xl text-sm font-semibold transition-all hover:border-gray-400"
+            >
+              <Download size={16} /> Export PDF
+            </button>
+            <button onClick={() => alert("Session link copied to clipboard!")} className="flex items-center gap-2 px-4 py-2 bg-transparent hover:bg-gray-100/80 text-gray-700 border border-gray-300/80 rounded-xl text-sm font-semibold transition-all hover:border-gray-400">
+              <Share2 size={16} /> Share
+            </button>
+            <button 
+              onClick={() => {
+                let stopped = false;
+                if (isRecording) { toggleRecording(); stopped = true; }
+                if (isSystemCapturing) { toggleSystemCapture(); stopped = true; }
+                if (stopped) {
+                  alert("Live session stopped successfully.");
+                } else {
+                  alert("No active session to stop.");
                 }
               }}
+              className="flex items-center gap-2 px-5 py-2 bg-accent hover:bg-[#436b4e] text-white rounded-xl text-sm font-semibold shadow-md transition-all hover:shadow-lg active:scale-95"
             >
-              {notes}
-            </ReactMarkdown>
+              <StopCircle size={16} /> Stop Session
+            </button>
+          </div>
+        </header>
+
+        {/* Status & Audio tools (Moved out to align the two columns below) */}
+        <div className="px-8 pt-6 pb-2 flex justify-between items-center flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <div className={`flex items-center gap-2 px-4 py-2 rounded-full border shadow-sm transition-all ${isRecording ? 'bg-red-50 text-red-600 border-red-200' : 'bg-white text-gray-500 border-gray-200'}`}>
+              {isRecording ? (
+                <>
+                  <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div>
+                  <span className="text-sm font-bold tracking-wide">Recording...</span>
+                </>
+              ) : (
+                <>
+                  <MicOff size={16} />
+                  <span className="text-sm font-bold tracking-wide">Ready to Record</span>
+                </>
+              )}
+            </div>
+            
+            <div className={`px-4 py-2 rounded-full border shadow-sm flex items-center gap-2 transition-all ${isSystemCapturing ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-white text-gray-500 border-gray-200'}`}>
+              {isSystemCapturing ? <ScreenShare size={16} /> : <ScreenShareOff size={16} />}
+              <span className="text-sm font-bold tracking-wide">{isSystemCapturing ? 'Capturing Window' : 'No Window'}</span>
+            </div>
           </div>
         </div>
-      </div>
 
+        {/* Content Area */}
+        <div className="flex-1 flex px-8 pb-8 gap-8 overflow-hidden">
+          
+          {/* Left Column (Visualizer & Transcript) */}
+          <div className="flex-[0.6] flex flex-col gap-6 h-full min-h-0">
+
+            {/* Audio Input Box */}
+            <div className="bg-panel rounded-2xl p-6 h-[280px] flex flex-col relative shadow-xl border border-gray-800">
+              {/* Fake color strip at top of panel */}
+              <div className="absolute top-0 left-6 right-6 h-1 bg-gradient-to-r from-emerald-500 via-yellow-500 to-red-500 rounded-b-md opacity-80"></div>
+              
+              <div className="text-xs font-bold tracking-widest text-gray-500 uppercase mt-2">
+                Audio Input — Live
+              </div>
+              
+              {/* Visualizer */}
+              <div className="flex-1 flex items-center justify-center">
+                <div className="visualizer-container">
+                  {[...Array(23)].map((_, i) => (
+                    <div key={i} className={`visualizer-bar ${(isRecording || isSystemCapturing) ? 'active' : ''}`}></div>
+                  ))}
+                </div>
+              </div>
+              
+              <div className="flex items-end justify-between mt-auto mb-4">
+                <div className="flex items-center gap-2">
+                  <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border ${isRecording || isSystemCapturing ? 'border-accent text-accent bg-accent/10' : 'border-gray-700 text-gray-500 bg-gray-800'}`}>
+                    <div className={`w-2 h-2 rounded-full ${isRecording || isSystemCapturing ? 'bg-accent animate-pulse' : 'bg-gray-500'}`}></div>
+                    <span className="text-xs font-bold tracking-wide uppercase">Recording</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="text-3xl font-mono text-white tracking-wider font-medium">
+                    {formatTime(recordingTime)}
+                  </div>
+                  {recordingTime > 0 && !isRecording && !isSystemCapturing && (
+                    <button 
+                      onClick={() => {
+                        if (window.confirm("Reset the timer to 00:00?")) {
+                          setRecordingTime(0);
+                        }
+                      }} 
+                      className="text-gray-500 hover:text-red-500 transition-colors p-1" 
+                      title="Reset Timer"
+                    >
+                      <RotateCcw size={18} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Action Buttons inside box */}
+              <div className="flex gap-3">
+                <button onClick={toggleRecording} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all border ${isRecording ? 'bg-emerald-900/50 border-emerald-500/50 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.15)]' : 'bg-[#15231c] border-[#22392d] text-emerald-500 hover:bg-[#1a2d24]'}`}>
+                  {isRecording ? <MicOff size={16} /> : <Mic size={16} />} Microphone
+                </button>
+                <button onClick={toggleSystemCapture} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all border ${isSystemCapturing ? 'bg-blue-900/50 border-blue-500/50 text-blue-400 shadow-[0_0_15px_rgba(59,130,246,0.15)]' : 'bg-[#151c2b] border-[#202b40] text-blue-400 hover:bg-[#1a2336]'}`}>
+                  {isSystemCapturing ? <ScreenShareOff size={16} /> : <MonitorUp size={16} />} Capture System
+                </button>
+                <input type="file" ref={audioFileInputRef} onChange={handleAudioFileUpload} accept="audio/*" className="hidden" />
+                <button onClick={() => audioFileInputRef.current?.click()} className="flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all border bg-[#271d15] border-[#3d2d20] text-amber-500 hover:bg-[#302319]">
+                  <Upload size={16} /> Upload Audio
+                </button>
+                <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".txt,.md" className="hidden" />
+                <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all border bg-[#29171a] border-[#402328] text-rose-400 hover:bg-[#331c20]">
+                  <FileText size={16} /> Upload Transcript
+                </button>
+              </div>
+            </div>
+
+            {/* Live Transcript Area */}
+            <div className="flex-1 bg-card rounded-2xl p-6 shadow-md border border-[#e6dac3] flex flex-col relative min-h-0">
+              <div className="flex justify-between items-center mb-4 pb-4 border-b border-gray-200">
+                <h2 className="text-2xl font-serif font-bold text-gray-900">Live Transcript</h2>
+                <div className="flex items-center gap-3">
+                  {isProcessingAudio && (
+                    <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full flex items-center gap-2 animate-pulse">
+                      <Loader2 size={12} className="animate-spin" /> {audioProgressText}
+                    </span>
+                  )}
+                  <button onClick={handleClearTranscript} className="text-gray-400 hover:text-red-500 transition-colors" title="Clear Transcript">
+                    <Trash2 size={18} />
+                  </button>
+                </div>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto pr-4 custom-scrollbar">
+                {transcript ? (
+                  <p className="text-gray-700 leading-relaxed font-medium text-[15px] whitespace-pre-wrap">
+                    {transcript}
+                  </p>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full text-gray-400 space-y-4">
+                    <MessageSquare size={48} className="opacity-20" />
+                    <p className="text-sm font-medium">Click the microphone to start capturing, or upload an audio file.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Stats Row */}
+            <div className="grid grid-cols-3 gap-4">
+              <div className="bg-card rounded-2xl p-5 shadow-sm border border-[#e6dac3] relative overflow-hidden">
+                <div className="absolute bottom-0 left-0 w-full h-1 bg-emerald-600"></div>
+                <div className="flex justify-between items-start mb-2">
+                  <span className="text-4xl font-serif font-bold text-gray-900">
+                    {transcript ? transcript.trim().split(/\s+/).filter(w => w.length > 0).length : 0}
+                  </span>
+                  {(isRecording || isSystemCapturing) && (
+                    <span className="text-[10px] font-bold text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded uppercase flex items-center gap-1">
+                      ↑ live
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] font-bold tracking-widest text-gray-500 uppercase">Words Captured</div>
+              </div>
+              <div className="bg-card rounded-2xl p-5 shadow-sm border border-[#e6dac3] relative overflow-hidden">
+                <div className="absolute bottom-0 left-0 w-full h-1 bg-amber-500"></div>
+                <div className="flex justify-between items-start mb-2">
+                  <span className="text-4xl font-serif font-bold text-gray-900">
+                    {notes.includes('### Your AI notes') ? 0 : (notes.split('## ').length - 1 || 0)}
+                  </span>
+                  <span className="text-[10px] font-bold text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded uppercase flex items-center gap-1">
+                    {notes.includes('### Your AI notes') ? 0 : (notes.split('## ').length - 1 || 0)} topics
+                  </span>
+                </div>
+                <div className="text-[11px] font-bold tracking-widest text-gray-500 uppercase">Note Sections</div>
+              </div>
+              <div className="bg-card rounded-2xl p-5 shadow-sm border border-[#e6dac3] relative overflow-hidden">
+                <div className="absolute bottom-0 left-0 w-full h-1 bg-blue-500"></div>
+                <div className="flex justify-between items-start mb-2">
+                  <span className="text-4xl font-serif font-bold text-gray-900 flex items-baseline">
+                    {Math.floor(recordingTime / 60)}<span className="text-lg text-gray-500 ml-1">m</span>
+                  </span>
+                </div>
+                <div className="text-[11px] font-bold tracking-widest text-gray-500 uppercase">Duration</div>
+              </div>
+            </div>
+
+          </div>
+
+          {/* Right Column (Study Notes) */}
+          <div className="flex-[0.4] bg-card rounded-2xl shadow-md border border-[#e6dac3] flex flex-col relative h-full min-h-0 overflow-hidden">
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex justify-between items-start mb-2">
+                <div>
+                  <h2 className="text-2xl font-serif font-bold text-gray-900">Study Notes</h2>
+                  <p className="text-xs text-gray-500 font-medium">AI-structured · Auto-updates every 60s</p>
+                </div>
+                <div className="flex bg-gray-100 p-1 rounded-full">
+                  <button onClick={() => handleDetailLevelClick('detailed')} className={`px-4 py-1.5 text-xs font-semibold rounded-full transition-colors ${noteDetailLevel === 'detailed' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>Detailed</button>
+                  <button onClick={() => handleDetailLevelClick('short')} className={`px-4 py-1.5 text-xs font-semibold rounded-full transition-colors ${noteDetailLevel === 'short' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>Brief</button>
+                  <button onClick={() => handleDetailLevelClick('qa')} className={`px-4 py-1.5 text-xs font-semibold rounded-full transition-colors ${noteDetailLevel === 'qa' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>Q&A</button>
+                </div>
+              </div>
+              
+              <div className="flex justify-between items-center mt-4">
+                <div className="flex gap-2">
+                  <button onClick={handleDownloadPDF} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-md text-xs font-semibold text-gray-700 hover:bg-gray-50:bg-gray-600 shadow-sm transition-colors">
+                    <Download size={14} /> PDF
+                  </button>
+                  <button onClick={() => setIsEditing(!isEditing)} className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-md text-xs font-semibold transition-colors shadow-sm ${isEditing ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50:bg-gray-600'}`}>
+                    <FileText size={14} /> {isEditing ? 'Save' : 'Edit'}
+                  </button>
+                </div>
+                <button onClick={() => setNotes('### Your AI notes will appear here...')} className="flex items-center gap-1.5 px-3 py-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-md text-xs font-semibold transition-colors">
+                  <Trash2 size={14} /> Clear
+                </button>
+              </div>
+            </div>
+
+            <div id="notes-content" className="flex-1 overflow-y-auto p-6 pb-28">
+               {isEditing ? (
+                 <textarea 
+                   className="w-full h-full min-h-[400px] bg-transparent border-none p-0 font-mono text-sm text-gray-800 focus:outline-none focus:ring-0 resize-none leading-relaxed"
+                   value={notes}
+                   onChange={(e) => setNotes(e.target.value)}
+                 />
+               ) : (
+                 <div className="prose prose-sm prose-stone max-w-none">
+                   <ReactMarkdown
+                     components={{
+                       code({ node, inline, className, children, ...props }) {
+                         const match = /language-(\w+)/.exec(className || '')
+                         if (!inline && match && match[1] === 'mermaid') {
+                           return <Mermaid chart={String(children).replace(/\n$/, '')} />
+                         }
+                         return <code className={className} {...props}>{children}</code>
+                       },
+                       h2({children}) {
+                          return <div className="mt-8 mb-4 border-b border-gray-200 pb-2"><span className="text-[10px] font-bold tracking-widest text-accent uppercase mb-1 block">Topic</span><h2 className="text-xl font-serif font-bold text-gray-900 m-0">{children}</h2></div>
+                       },
+                       h3({children}) {
+                           // Extract text to check if it's a Q&A question
+                           let text = '';
+                           React.Children.forEach(children, child => {
+                             if (typeof child === 'string') text += child;
+                           });
+                           
+                           if (text.trim().startsWith('Q:')) {
+                             return (
+                               <div className="mt-8 mb-2 p-5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl shadow-sm text-blue-900 font-bold flex items-start gap-3">
+                                 <div className="bg-blue-500 text-white w-7 h-7 rounded-full flex items-center justify-center text-xs flex-shrink-0 mt-0.5 shadow-inner">
+                                   Q
+                                 </div>
+                                 <div className="text-lg leading-snug pt-0.5">{text.replace(/^Q:\s*/, '')}</div>
+                               </div>
+                             );
+                           }
+                           return <h3 className="text-[11px] font-bold tracking-widest text-accent uppercase mt-6 mb-3">{children}</h3>
+                       },
+                       blockquote({children}) {
+                         return (
+                           <div className="mb-8 ml-4 p-5 bg-white border-l-4 border-emerald-400 rounded-r-2xl rounded-bl-2xl shadow-md text-gray-700 flex items-start gap-4 relative">
+                             <div className="absolute -left-[18px] top-5 bg-emerald-400 text-white w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold border-4 border-[#fdfbf7] shadow-sm">
+                               A
+                             </div>
+                             <div className="pl-2 leading-relaxed w-full text-sm">
+                               {children}
+                             </div>
+                           </div>
+                         );
+                       },
+                       ul({children}) {
+                         return <div className="flex flex-col gap-3 my-4">{children}</div>
+                       },
+                       li({children}) {
+                          return (
+                            <div className="bg-[#f8f5ee] border border-[#e6dac3] rounded-xl p-4 flex gap-3 shadow-sm hover:shadow-md transition-shadow">
+                              <div className="mt-0.5">
+                                <div className="w-6 h-6 rounded-full bg-gradient-to-br from-emerald-100 to-emerald-200 border border-emerald-300 flex items-center justify-center text-emerald-700 shadow-inner">
+                                  <Sparkles size={12} />
+                                </div>
+                              </div>
+                              <div className="flex-1 text-sm text-gray-800 leading-relaxed">
+                                {children}
+                              </div>
+                            </div>
+                          )
+                       }
+                     }}
+                   >
+                     {notes}
+                   </ReactMarkdown>
+                 </div>
+               )}
+            </div>
+
+            {/* Bottom Floating Generate Area */}
+            <div className="absolute bottom-0 left-0 w-full p-6 bg-gradient-to-t from-card via-card to-transparent pt-12 pointer-events-none">
+               {(isRecording || isSystemCapturing) && (
+                 <div className="flex items-center gap-2 mb-4 pl-2 opacity-70">
+                   <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse"></div>
+                   <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" style={{animationDelay: '0.2s'}}></div>
+                   <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" style={{animationDelay: '0.4s'}}></div>
+                   <span className="text-xs font-medium ml-2 text-gray-600">AI is listening and will update notes in {60 - (recordingTime % 60)}s...</span>
+                 </div>
+               )}
+               <button 
+                  onClick={generateNotes}
+                  disabled={!transcript || isGenerating}
+                  className="group w-full bg-panel hover:bg-gradient-to-r hover:from-accent hover:to-amber-600 hover:border-transparent text-white font-bold py-4 rounded-xl flex justify-center items-center gap-2 shadow-xl transition-all duration-300 disabled:opacity-70 disabled:cursor-not-allowed pointer-events-auto hover:shadow-[0_0_20px_rgba(85,130,98,0.4)]"
+               >
+                 {isGenerating ? <Loader2 size={18} className="animate-spin" /> : <Zap size={16} className="fill-emerald-400 text-emerald-400 group-hover:fill-white group-hover:text-emerald-100 transition-colors" />}
+                 {isGenerating ? 'Processing...' : 'Generate Notes Now'}
+                 <span className="bg-white/20 text-[10px] px-1.5 py-0.5 rounded ml-1 text-white/90">AI</span>
+               </button>
+            </div>
+          </div>
+          
+        </div>
+          </>
+        )}
+      </div>
       {/* Audio processing glassmorphic overlay */}
       {isProcessingAudio && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex flex-col justify-center items-center z-50 transition-all duration-300">
           <div className="bg-gray-800 p-8 rounded-2xl border border-gray-700 max-w-md w-full flex flex-col items-center shadow-2xl relative overflow-hidden">
-            {/* Spinning glowing gradient ring */}
             <div className="relative w-24 h-24 mb-6">
               <div className="absolute inset-0 rounded-full border-4 border-emerald-500/20"></div>
               <div className="absolute inset-0 rounded-full border-4 border-t-emerald-500 animate-spin"></div>
               <Loader2 className="absolute inset-0 m-auto text-emerald-400 w-10 h-10 animate-spin" />
             </div>
-
             <h3 className="text-xl font-bold mb-2 text-white text-center">Processing Audio File</h3>
-            <p className="text-gray-400 text-center text-sm px-4 leading-relaxed mb-4">
-              We decode your file, resample it to 16kHz mono, and transcribe it block-by-block. This avoids file size limits and ensures perfect transcription.
-            </p>
-
-            {/* Dynamic Status Text */}
             <div className="bg-gray-900/60 w-full py-3 px-4 rounded-xl border border-gray-700/50 font-mono text-xs text-emerald-400 text-center animate-pulse">
               {audioProgressText}
             </div>
           </div>
         </div>
       )}
+      <NameModal 
+        isOpen={isNameModalOpen} 
+        initialName={username}
+        onClose={username ? () => setIsNameModalOpen(false) : undefined}
+        onSubmit={(name) => {
+          localStorage.setItem('username', name);
+          setUsername(name);
+          setIsNameModalOpen(false);
+        }} 
+      />
+      <DocumentModal 
+        isOpen={isDocumentModalOpen} 
+        onClose={() => setIsDocumentModalOpen(false)} 
+        sessions={sessions}
+        onDeleteSession={deleteSession}
+        onLoadTranscript={(text, preGeneratedNotes, sessionId) => {
+          setTranscript(text);
+          setCurrentView('live');
+          if (sessionId) sessionIdRef.current = sessionId;
+          if (preGeneratedNotes) {
+            setNotes(preGeneratedNotes);
+          } else {
+            setNotes('### Your AI notes will appear here...');
+          }
+          lastProcessedIndex.current = 0;
+        }} 
+      />
+      <SearchModal
+        isOpen={isSearchModalOpen}
+        onClose={() => setIsSearchModalOpen(false)}
+        sessions={sessions}
+        onDeleteSession={deleteSession}
+        onLoadTranscript={(text, sessionId) => {
+          setTranscript(text);
+          setCurrentView('live');
+          if (sessionId) sessionIdRef.current = sessionId;
+          setNotes('### Your AI notes will appear here...');
+          lastProcessedIndex.current = 0;
+        }}
+      />
+      <HistoryModal
+        isOpen={isHistoryModalOpen}
+        onClose={() => setIsHistoryModalOpen(false)}
+        sessions={sessions}
+        onDeleteSession={deleteSession}
+        onLoadTranscript={(text, sessionId) => {
+          setTranscript(text);
+          setCurrentView('live');
+          if (sessionId) sessionIdRef.current = sessionId;
+          setNotes('### Your AI notes will appear here...');
+          lastProcessedIndex.current = 0;
+        }}
+      />
       <video ref={hiddenVideoRef} autoPlay muted playsInline style={{ display: 'none' }} />
       <canvas ref={captureCanvasRef} style={{ display: 'none' }} />
     </div>

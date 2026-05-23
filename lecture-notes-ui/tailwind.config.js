@@ -7,7 +7,14 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Outfit', 'Inter', 'sans-serif'],
+        sans: ['Inter', 'Outfit', 'sans-serif'],
+        serif: ['"Playfair Display"', 'serif'],
+      },
+      colors: {
+        cream: '#f4ebd0', // Restored to original darker cream as requested
+        panel: '#1A1A1A',
+        card: '#FFFFFF', // Changed to pure white as requested
+        accent: '#558262', // Adjusted to match the button in the screenshot perfectly
       }
     },
   },

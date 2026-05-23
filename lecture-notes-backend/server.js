@@ -8,10 +8,12 @@ const path = require('path');
 const audioUploadsDir = path.join(__dirname, 'uploads', 'audios');
 const imageUploadsDir = path.join(__dirname, 'uploads', 'images');
 const backupsDir = path.join(__dirname, 'backups');
+const sessionsDir = path.join(__dirname, 'sessions');
 
 if (!fs.existsSync(audioUploadsDir)) fs.mkdirSync(audioUploadsDir, { recursive: true });
 if (!fs.existsSync(imageUploadsDir)) fs.mkdirSync(imageUploadsDir, { recursive: true });
 if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir, { recursive: true });
+if (!fs.existsSync(sessionsDir)) fs.mkdirSync(sessionsDir, { recursive: true });
 const Groq = require('groq-sdk');
 
 const app = express();
@@ -115,6 +117,8 @@ app.post('/api/generate-notes', async (req, res) => {
     let lengthInstruction = "Make the notes highly detailed and comprehensive. Expand on concepts thoroughly, providing full explanations, examples, and deep context from the transcript.";
     if (detailLevel === 'short') {
       lengthInstruction = "Make the notes extremely concise. Use short, one-liner bullet points. Focus only on the most critical takeaways.";
+    } else if (detailLevel === 'qa') {
+      lengthInstruction = "Format the notes entirely as a series of Questions and Answers (Q&A). Identify the most important concepts, formulate a clear question for each, and provide a comprehensive answer based on the transcript.\n\nCRITICAL FORMATTING:\nYou MUST format every question as an H3 heading starting exactly with '### Q: '\nYou MUST format every answer as a blockquote, but DO NOT include 'A:' or 'Answer:' in the text.\nExample:\n### Q: What is wave-particle duality?\n> It is a fundamental concept...";
     }
 
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -231,7 +235,75 @@ app.post('/api/transcribe-audio', async (req, res) => {
   }
 });
 
+// --- SESSION MANAGEMENT APIS ---
+
+// POST: Save or update a session
+app.post('/api/sessions/save', (req, res) => {
+  try {
+    const { sessionId, title, transcript, notes, duration, words, date } = req.body;
+    if (!sessionId) return res.status(400).json({ error: "sessionId is required" });
+
+    const filePath = path.join(sessionsDir, `${sessionId}.json`);
+    const sessionData = {
+      id: sessionId,
+      title: title || 'Untitled Session',
+      date: date || new Date().toISOString(),
+      duration: duration || '0m',
+      words: words || 0,
+      rawTranscript: transcript || '',
+      preGeneratedNotes: notes || ''
+    };
+
+    fs.writeFileSync(filePath, JSON.stringify(sessionData, null, 2));
+    res.json({ success: true, session: sessionData });
+  } catch (error) {
+    console.error("Error saving session:", error);
+    res.status(500).json({ error: "Failed to save session" });
+  }
+});
+
+// GET: Fetch all sessions
+app.get('/api/sessions', (req, res) => {
+  try {
+    const files = fs.readdirSync(sessionsDir).filter(f => f.endsWith('.json'));
+    const sessions = files.map(file => {
+      const content = fs.readFileSync(path.join(sessionsDir, file), 'utf-8');
+      try {
+        return JSON.parse(content);
+      } catch (e) {
+        return null;
+      }
+    }).filter(s => s !== null);
+    
+    // Sort descending by date (newest first)
+    sessions.sort((a, b) => new Date(b.date) - new Date(a.date));
+    
+    res.json(sessions);
+  } catch (error) {
+    console.error("Error fetching sessions:", error);
+    res.status(500).json({ error: "Failed to fetch sessions" });
+  }
+});
+
+// DELETE: Delete a session
+app.delete('/api/sessions/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const filePath = path.join(sessionsDir, `${id}.json`);
+    
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      res.json({ success: true, message: "Session deleted successfully" });
+    } else {
+      res.status(404).json({ error: "Session not found" });
+    }
+  } catch (error) {
+    console.error("Error deleting session:", error);
+    res.status(500).json({ error: "Failed to delete session" });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`✅ Groq Backend running on http://localhost:${PORT}`);
+  console.log(`🚀 AI Lecture Notes Backend running on http://localhost:${PORT}`);
 });
