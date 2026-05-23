@@ -1,0 +1,5 @@
+Today we are going to discuss the software development lifecycle, also known as SDLC. It's a very straightforward process but it's important to understand the sequential relationship between the phases. 
+
+First, we start with the Requirement Analysis phase, where we gather what the user wants. Once we have the requirements, we move to the Design phase to plan the architecture. After the design is approved, we proceed to the Implementation phase, where the actual coding happens. Once the code is written, it flows into the Testing phase to find any bugs. Finally, after successful testing, we reach the Deployment phase where the software is released to the users. 
+
+Please make sure to visualize this step-by-step process using a Mermaid flowchart diagram so we can clearly see the flow from one phase to the next.
