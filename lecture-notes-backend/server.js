@@ -33,7 +33,7 @@ class GroqPoolManager {
     
     // Parse keys from GROQ_API_KEYS or fallback to GROQ_API_KEY
     const keysStr = process.env.GROQ_API_KEYS || process.env.GROQ_API_KEY || "YOUR_GROQ_API_KEY";
-    const keys = keysStr.split(',').map(k => k.trim()).filter(k => k.length > 0);
+    const keys = keysStr.split(',').map(k => k.replace(/['"]/g, '').trim()).filter(k => k.length > 0);
     
     // Create a client for each key
     for (const key of keys) {
@@ -180,7 +180,17 @@ app.post('/api/generate-notes', async (req, res) => {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Transfer-Encoding', 'chunked');
 
+    let isCancelled = false;
+    req.on('aborted', () => {
+      if (!res.writableEnded) {
+        console.log("Client connection aborted prematurely. Stopping generation loop.");
+        isCancelled = true;
+      }
+    });
+
     for (let i = 0; i < chunks.length; i++) {
+      if (isCancelled) break;
+      
       console.log(`Processing chunk ${i + 1}/${chunks.length}...`);
       
       const imagesToSend = images.slice(-2); // Send max 2 recent unique slides to prevent token limit explosion

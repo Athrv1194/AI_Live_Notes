@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Mic, MicOff, FileText, Loader2, Upload, Download, ScreenShare, ScreenShareOff, Trash2, LayoutGrid, Search, Server, MonitorUp, Share2, StopCircle, MessageSquare, Zap, RotateCcw, Radio, Sparkles } from 'lucide-react';
+import { Mic, MicOff, FileText, Loader2, Upload, Download, ScreenShare, ScreenShareOff, Trash2, LayoutGrid, Search, Server, MonitorUp, Share2, StopCircle, MessageSquare, Zap, RotateCcw, Radio, Sparkles, Clock, AlertCircle, X } from 'lucide-react';
 import mermaid from 'mermaid';
 import Dashboard from './components/Dashboard';
 import DocumentModal from './components/DocumentModal';
@@ -81,6 +81,8 @@ const App = () => {
   const [notes, setNotes] = useState('### Your AI notes will appear here...');
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationStatus, setGenerationStatus] = useState('');
+  const [generationProgress, setGenerationProgress] = useState(0);
+  const [isRateLimited, setIsRateLimited] = useState(false);
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
   const [audioProgressText, setAudioProgressText] = useState('');
   const [noteDetailLevel, setNoteDetailLevel] = useState('detailed');
@@ -109,6 +111,20 @@ const App = () => {
   const captureCanvasRef = useRef(null);
   const visionFramesRef = useRef([]);
   const visionIntervalRef = useRef(null);
+  const abortControllerRef = useRef(null);
+  const progressIntervalRef = useRef(null);
+  const generationStartTimeRef = useRef(0);
+
+  const cancelGeneration = (e) => {
+    if (e) e.stopPropagation();
+    // Prevent accidental double-clicks or mouseup events from instantly cancelling
+    if (Date.now() - generationStartTimeRef.current < 1000) return; 
+    
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+  };
 
   const wordCount = useMemo(() => {
     return transcript.split(/\s+/).filter(w => w.length > 0).length;
@@ -754,13 +770,27 @@ const App = () => {
 
     setIsGenerating(true);
     isGeneratingRef.current = true;
+    generationStartTimeRef.current = Date.now();
+    setIsRateLimited(false);
+    setGenerationProgress(0);
     setGenerationStatus(estimatedChunks > 1 ? `Processing (~${estimatedSeconds}s)` : 'Processing...');
 
+    // Smooth simulated progress
+    let elapsed = 0;
+    progressIntervalRef.current = setInterval(() => {
+      elapsed += 0.5;
+      const pct = Math.min(95, Math.floor((elapsed / estimatedSeconds) * 100));
+      setGenerationProgress(pct);
+    }, 500);
+
     const longProcessTimeout = setTimeout(() => {
+      setIsRateLimited(true);
       setGenerationStatus('Still processing... Large transcript detected, this may take a few minutes due to rate limits.');
     }, 15000); // 15 seconds
 
     try {
+      abortControllerRef.current = new AbortController();
+
       const response = await fetch('http://localhost:3000/api/generate-notes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -769,6 +799,7 @@ const App = () => {
           detailLevel: noteDetailLevel,
           images: isVisionEnabled ? visionFramesRef.current : []
         }),
+        signal: abortControllerRef.current.signal
       });
 
       // Clear frames so we don't resend them on the next chunk
@@ -803,13 +834,23 @@ const App = () => {
       lastProcessedIndex.current = currentTranscriptLength;
 
     } catch (error) {
-      console.error("AI Error:", error);
-      clearTimeout(longProcessTimeout);
-      alert("Error generating notes: " + error.message);
+      if (error.name === 'AbortError') {
+        console.log("Notes generation cancelled by user.");
+      } else {
+        console.error("AI Error:", error);
+        alert("Error generating notes: " + error.message);
+      }
     } finally {
-      setIsGenerating(false);
-      isGeneratingRef.current = false;
-      setGenerationStatus('');
+      clearTimeout(longProcessTimeout);
+      clearInterval(progressIntervalRef.current);
+      setGenerationProgress(100);
+      setTimeout(() => {
+        setIsGenerating(false);
+        isGeneratingRef.current = false;
+        setGenerationStatus('');
+        setIsRateLimited(false);
+        setGenerationProgress(0);
+      }, 500); // Small delay to show 100%
     }
   }, [transcript, noteDetailLevel, isVisionEnabled]);
 
@@ -1226,15 +1267,80 @@ const App = () => {
                    <span className="text-xs font-medium ml-2 text-gray-600">AI is listening and will update notes in {60 - (recordingTime % 60)}s...</span>
                  </div>
                )}
-               <button 
-                  onClick={generateNotes}
-                  disabled={!transcript || isGenerating}
-                  className="group w-full bg-panel hover:bg-gradient-to-r hover:from-accent hover:to-amber-600 hover:border-transparent text-white font-bold py-4 rounded-xl flex justify-center items-center gap-2 shadow-xl transition-all duration-300 disabled:opacity-70 disabled:cursor-not-allowed pointer-events-auto hover:shadow-[0_0_20px_rgba(85,130,98,0.4)]"
-               >
-                 {isGenerating ? <Loader2 size={18} className="animate-spin" /> : <Zap size={16} className="fill-emerald-400 text-emerald-400 group-hover:fill-white group-hover:text-emerald-100 transition-colors" />}
-                 {isGenerating ? generationStatus : 'Generate Notes Now'}
-                 <span className="bg-white/20 text-[10px] px-1.5 py-0.5 rounded ml-1 text-white/90">AI</span>
-               </button>
+                              {isGenerating ? (
+                  isRateLimited ? (
+                    <div className="w-full bg-[#1c1a17] border border-[#3f301d] rounded-2xl p-4 shadow-xl flex flex-col relative overflow-hidden group">
+                      <div className="flex items-center gap-4 mb-3 relative z-10">
+                        <div className="w-10 h-10 rounded-xl bg-[#2a1f12] border border-[#4a3419] flex items-center justify-center flex-shrink-0">
+                          <Clock size={20} className="text-amber-500" />
+                        </div>
+                        <div className="flex-1 min-w-0 flex justify-between items-center">
+                          <div className="flex flex-col text-left">
+                            <span className="text-white font-bold text-[15px]">Processing large transcript</span>
+                            <span className="text-gray-400 text-[13px]">Rate limit reached — this may take a few minutes</span>
+                          </div>
+                          <div className="flex gap-1 ml-4">
+                            <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></div>
+                            <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" style={{animationDelay: '0.2s'}}></div>
+                            <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" style={{animationDelay: '0.4s'}}></div>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="w-full h-[3px] bg-[#2a1f12] rounded-full mb-3 overflow-hidden relative z-10">
+                        <div className="h-full bg-gradient-to-r from-amber-600 to-amber-400 rounded-full transition-all duration-300" style={{width: `${generationProgress}%`}}></div>
+                      </div>
+
+                      <div className="flex items-center gap-2 text-[12px] text-gray-500 relative z-10">
+                        <AlertCircle size={14} className="text-amber-600/70" />
+                        <span>Your notes will appear automatically once ready. No action needed.</span>
+                      </div>
+                      
+                      <button onClick={cancelGeneration} className="absolute inset-0 w-full h-full bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-20 flex items-center justify-center backdrop-blur-[2px]">
+                         <span className="bg-red-500/20 text-red-400 border border-red-500/30 px-4 py-1.5 rounded-full text-sm font-bold flex items-center gap-2">
+                           <X size={16} /> Cancel Processing
+                         </span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="w-full bg-[#1c1a17] border border-[#2a2620] rounded-xl h-14 relative overflow-hidden flex items-center px-5 shadow-lg group">
+                      <div className="absolute left-0 bottom-0 h-[2px] bg-[#2a2620] w-full">
+                         <div className="h-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-300 ease-out shadow-[0_0_10px_rgba(16,185,129,0.5)]" style={{width: `${generationProgress}%`}}></div>
+                      </div>
+                      
+                      <div className="flex items-center gap-3 z-10">
+                        <div className="flex gap-1">
+                          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" style={{animationDelay: '0.2s'}}></div>
+                          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" style={{animationDelay: '0.4s'}}></div>
+                        </div>
+                        <span className="text-white font-bold text-[15px]">{generationStatus || 'Generating notes...'}</span>
+                      </div>
+                      
+                      <div className="ml-auto text-emerald-400 font-mono text-[13px] font-bold z-10">
+                        {generationProgress}%
+                      </div>
+
+                      <button onClick={cancelGeneration} className="absolute inset-0 w-full h-full bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-20 flex items-center justify-center backdrop-blur-[2px]">
+                         <span className="bg-red-500/20 text-red-400 border border-red-500/30 px-4 py-1.5 rounded-full text-sm font-bold flex items-center gap-2">
+                           <X size={16} /> Cancel
+                         </span>
+                      </button>
+                    </div>
+                  )
+                ) : (
+                  <button 
+                     onClick={generateNotes}
+                     disabled={!transcript}
+                     className="group w-full bg-[#1c1a17] hover:bg-[#23201c] border border-[#2a2620] hover:border-[#3a352c] text-white py-4 rounded-xl flex justify-between items-center px-6 shadow-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed pointer-events-auto"
+                  >
+                    <div className="flex items-center gap-3">
+                      <Sparkles size={18} className="text-emerald-400 group-hover:text-emerald-300 transition-colors" />
+                      <span className="font-bold text-[15px]">Generate smart notes</span>
+                    </div>
+                    <span className="bg-[#2a2620] text-emerald-500/80 border border-emerald-500/20 text-[11px] font-bold px-2 py-1 rounded-md tracking-wider">AI</span>
+                  </button>
+                )}
             </div>
           </div>
           
