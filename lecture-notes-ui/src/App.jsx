@@ -31,7 +31,10 @@ const Mermaid = ({ chart }) => {
       const cleanChart = chart.trim()
         .replace(/-->\|([^|]+)\|>/g, '-->|$1|')
         .replace(/-\.->\|([^|]+)\|>/g, '-.->|$1|')
-        .replace(/==>\|([^|]+)\|>/g, '==>|$1|');
+        .replace(/==>\|([^|]+)\|>/g, '==>|$1|')
+        .replace(/\[([^"\]]+)\]/g, '["$1"]') // Fix unquoted square bracket labels
+        .replace(/\(([^")]+)\)/g, '("$1")')  // Fix unquoted parentheses labels
+        .replace(/\{([^"}]+)\}/g, '{"$1"}'); // Fix unquoted curly brace labels
 
       // Check syntax first before trying to render
       mermaid.parse(cleanChart)
@@ -77,7 +80,7 @@ const App = () => {
   const [transcript, setTranscript] = useState('');
   const [notes, setNotes] = useState('### Your AI notes will appear here...');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [, setGenerationStatus] = useState('');
+  const [generationStatus, setGenerationStatus] = useState('');
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
   const [audioProgressText, setAudioProgressText] = useState('');
   const [noteDetailLevel, setNoteDetailLevel] = useState('detailed');
@@ -106,6 +109,28 @@ const App = () => {
   const captureCanvasRef = useRef(null);
   const visionFramesRef = useRef([]);
   const visionIntervalRef = useRef(null);
+
+  const wordCount = useMemo(() => {
+    return transcript.split(/\s+/).filter(w => w.length > 0).length;
+  }, [transcript]);
+
+  const transcriptParagraphs = useMemo(() => {
+    if (transcript.length < 2000) return [<p key={0} className="mb-4">{transcript}</p>];
+    const chunks = [];
+    let currentChunk = '';
+    const words = transcript.split(' ');
+    for (let i = 0; i < words.length; i++) {
+      currentChunk += words[i] + ' ';
+      if (currentChunk.length > 1500 && i !== words.length - 1) {
+        chunks.push(currentChunk);
+        currentChunk = '';
+      }
+    }
+    if (currentChunk) chunks.push(currentChunk);
+    return chunks.map((chunk, index) => (
+      <p key={index} className="mb-4">{chunk}</p>
+    ));
+  }, [transcript]);
 
   // Fetch sessions on mount
   useEffect(() => {
@@ -151,7 +176,7 @@ const App = () => {
           transcript: transcript,
           notes: notes,
           duration: `${Math.floor(recordingTime / 60)}m ${recordingTime % 60}s`,
-          words: transcript.split(/\s+/).filter(w => w.length > 0).length,
+          words: wordCount,
           date: new Date().toISOString()
         })
       }).then(() => {
@@ -164,7 +189,7 @@ const App = () => {
     }, 5000); // 5 seconds debounce
 
     return () => clearTimeout(timer);
-  }, [transcript, notes, recordingTime]);
+  }, [transcript, notes, recordingTime, wordCount]);
 
 
 
@@ -295,7 +320,7 @@ const App = () => {
 
       let mediaRecorder = null;
       let audioChunks = [];
-      const recordInterval = 4000; // 4 seconds chunk size for extremely fast real-time transcription!
+      const recordInterval = 15000; // 15 seconds chunk size for heavily extended rate limits (8+ hours)!
 
       const startRecordingChunk = () => {
         if (!isSystemCapturingRef.current) return;
@@ -310,11 +335,11 @@ const App = () => {
           }
         };
 
-        mediaRecorder.onstop = async () => {
+        mediaRecorder.onstop = () => {
           if (audioChunks.length > 0) {
             const blob = new Blob(audioChunks, { type: 'audio/webm' });
             if (blob.size > 1000) {
-              await sendAudioToBackend(blob);
+              sendAudioToBackend(blob).catch(err => console.error("Audio chunk error:", err));
             }
           }
           // Recursively start the next chunk if still capturing
@@ -724,9 +749,12 @@ const App = () => {
       return;
     }
 
+    const estimatedChunks = Math.ceil(newChunk.length / 6000);
+    const estimatedSeconds = estimatedChunks * 15; // Approx 15s per chunk taking rate limits into account
+
     setIsGenerating(true);
     isGeneratingRef.current = true;
-    setGenerationStatus('Generating notes...');
+    setGenerationStatus(estimatedChunks > 1 ? `Processing (~${estimatedSeconds}s)` : 'Processing...');
 
     const longProcessTimeout = setTimeout(() => {
       setGenerationStatus('Still processing... Large transcript detected, this may take a few minutes due to rate limits.');
@@ -1096,9 +1124,9 @@ const App = () => {
               
               <div className="flex-1 overflow-y-auto pr-4 custom-scrollbar">
                 {transcript ? (
-                  <p className="text-gray-700 leading-relaxed font-medium text-[15px] whitespace-pre-wrap">
-                    {transcript}
-                  </p>
+                  <div className="text-gray-700 leading-relaxed font-medium text-[15px] whitespace-pre-wrap">
+                    {transcriptParagraphs}
+                  </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full text-gray-400 space-y-4">
                     <MessageSquare size={48} className="opacity-20" />
@@ -1113,7 +1141,7 @@ const App = () => {
               <div className="bg-card rounded-2xl p-5 shadow-sm border border-[#e6dac3] border-b-4 border-b-indigo-500 overflow-hidden">
                 <div className="flex justify-between items-start mb-2">
                   <span className="text-4xl font-serif font-bold text-gray-900">
-                    {transcript ? transcript.trim().split(/\s+/).filter(w => w.length > 0).length : 0}
+                    {wordCount}
                   </span>
                   {(isRecording || isSystemCapturing) && (
                     <span className="text-[10px] font-bold text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded uppercase flex items-center gap-1">
@@ -1204,7 +1232,7 @@ const App = () => {
                   className="group w-full bg-panel hover:bg-gradient-to-r hover:from-accent hover:to-amber-600 hover:border-transparent text-white font-bold py-4 rounded-xl flex justify-center items-center gap-2 shadow-xl transition-all duration-300 disabled:opacity-70 disabled:cursor-not-allowed pointer-events-auto hover:shadow-[0_0_20px_rgba(85,130,98,0.4)]"
                >
                  {isGenerating ? <Loader2 size={18} className="animate-spin" /> : <Zap size={16} className="fill-emerald-400 text-emerald-400 group-hover:fill-white group-hover:text-emerald-100 transition-colors" />}
-                 {isGenerating ? 'Processing...' : 'Generate Notes Now'}
+                 {isGenerating ? generationStatus : 'Generate Notes Now'}
                  <span className="bg-white/20 text-[10px] px-1.5 py-0.5 rounded ml-1 text-white/90">AI</span>
                </button>
             </div>

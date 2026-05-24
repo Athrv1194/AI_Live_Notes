@@ -25,8 +25,35 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use('/api/transcribe-audio', express.raw({ type: ['audio/webm', 'audio/wav', 'audio/mpeg', 'audio/mp3', 'audio/m4a'], limit: '50mb' }));
 
 
-// Initialize Groq
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY || "YOUR_GROQ_API_KEY" });
+// Initialize Groq Pool
+class GroqPoolManager {
+  constructor() {
+    this.clients = [];
+    this.currentIndex = 0;
+    
+    // Parse keys from GROQ_API_KEYS or fallback to GROQ_API_KEY
+    const keysStr = process.env.GROQ_API_KEYS || process.env.GROQ_API_KEY || "YOUR_GROQ_API_KEY";
+    const keys = keysStr.split(',').map(k => k.trim()).filter(k => k.length > 0);
+    
+    // Create a client for each key
+    for (const key of keys) {
+      this.clients.push(new Groq({ apiKey: key }));
+    }
+    console.log(`🔑 Initialized Groq Pool with ${this.clients.length} API key(s)`);
+  }
+
+  getClient() {
+    return this.clients[this.currentIndex];
+  }
+
+  rotateClient() {
+    this.currentIndex = (this.currentIndex + 1) % this.clients.length;
+    console.log(`🔄 Switched to Groq API Key ${this.currentIndex + 1}/${this.clients.length}`);
+    return this.getClient();
+  }
+}
+
+const groqPool = new GroqPoolManager();
 
 // Helper function to safely split text into chunks to avoid token limits
 function chunkText(text, maxChars) {
@@ -35,63 +62,92 @@ function chunkText(text, maxChars) {
   // Attempt to split by sentences
   const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
 
-  for (const sentence of sentences) {
-    if ((currentChunk.length + sentence.length) > maxChars) {
+  for (let sentence of sentences) {
+    sentence = sentence.trim();
+    if (!sentence) continue;
+
+    // If a single sentence is larger than maxChars, we MUST forcefully split it
+    if (sentence.length > maxChars) {
+      // Push whatever we currently have
       if (currentChunk.trim().length > 0) {
         chunks.push(currentChunk.trim());
+        currentChunk = '';
       }
+      
+      // Force split the massive sentence
+      for (let i = 0; i < sentence.length; i += maxChars) {
+        chunks.push(sentence.slice(i, i + maxChars));
+      }
+    } 
+    // Otherwise, check if adding this sentence exceeds the limit
+    else if ((currentChunk.length + sentence.length + 1) > maxChars) {
+      chunks.push(currentChunk.trim());
       currentChunk = sentence;
-    } else {
-      currentChunk += ' ' + sentence;
+    } 
+    // Otherwise, just append it
+    else {
+      currentChunk += (currentChunk ? ' ' : '') + sentence;
     }
   }
+  
   if (currentChunk.trim().length > 0) {
     chunks.push(currentChunk.trim());
   }
-  // Fallback for huge blocks without punctuation
-  if (chunks.length === 0 && text.length > 0) {
-    for (let i = 0; i < text.length; i += maxChars) {
-      chunks.push(text.slice(i, i + maxChars));
-    }
-  }
+  
   return chunks;
 }
 
-// Wrapper to call Groq with auto-retry on 429 Rate Limit
-async function generateWithRetry(messages, model, temperature) {
-  let retries = 4;
+// Wrapper to call Groq with auto-retry and key rotation on 429 Rate Limit
+async function executeWithGroqPool(actionFn) {
+  let retries = groqPool.clients.length * 2; // Try each key twice
   while (retries > 0) {
     try {
-      const chatCompletion = await groq.chat.completions.create({
-        messages,
-        model,
-        temperature,
-        max_tokens: 1500,
-      });
-      return chatCompletion.choices[0]?.message?.content || "";
+      const client = groqPool.getClient();
+      return await actionFn(client);
     } catch (error) {
-      // 429 = rate limit, 413 = request too large (but we treat it as rate limit token exceeded as per groq errors)
+      // 429 = rate limit, 413 = request too large
       if (error.status === 429 || error.status === 413 || (error.error && error.error.error && error.error.error.code === 'rate_limit_exceeded')) {
         retries--;
         if (retries === 0) throw error;
 
-        let waitTimeSeconds = 25; // default wait
-
-        // Try to parse 'retry-after' header if available
-        if (error.headers && typeof error.headers.get === 'function') {
-          const retryAfter = error.headers.get('retry-after');
-          if (retryAfter) waitTimeSeconds = parseInt(retryAfter, 10) || 25;
-        } else if (error.headers && error.headers['retry-after']) {
-          waitTimeSeconds = parseInt(error.headers['retry-after'], 10) || 25;
+        let waitTimeSeconds = 2; // Default small buffer
+        
+        // Parse 'retry-after' header to properly handle Org-wide TPM limits
+        if (error.headers) {
+          let retryAfter = null;
+          if (typeof error.headers.get === 'function') {
+            retryAfter = error.headers.get('retry-after');
+          } else if (error.headers['retry-after']) {
+            retryAfter = error.headers['retry-after'];
+          }
+          if (retryAfter) {
+            waitTimeSeconds = parseInt(retryAfter, 10);
+            if (isNaN(waitTimeSeconds)) waitTimeSeconds = 2;
+          }
         }
 
-        console.log(`⏳ Rate limit hit. Retrying in ${waitTimeSeconds} seconds... (${retries} retries left)`);
+        console.log(`⚠️ Rate limit hit. Required wait: ${waitTimeSeconds}s. Rotating API key... (${retries} retries left)`);
+        groqPool.rotateClient();
+        
+        // Respect the required wait time before retrying to prevent rapid failures
         await new Promise(resolve => setTimeout(resolve, waitTimeSeconds * 1000));
       } else {
         throw error;
       }
     }
   }
+}
+
+async function generateWithRetry(messages, model, temperature) {
+  return await executeWithGroqPool(async (groqClient) => {
+    const chatCompletion = await groqClient.chat.completions.create({
+      messages,
+      model,
+      temperature,
+      max_tokens: 1500,
+    });
+    return chatCompletion.choices[0]?.message?.content || "";
+  });
 }
 
 app.post('/api/generate-notes', async (req, res) => {
@@ -142,7 +198,7 @@ app.post('/api/generate-notes', async (req, res) => {
          });
        }
 
-       const messages = [
+           const messages = [
          {
            role: "system",
            content: `You are an expert academic note-taker. Your task is to transform the provided lecture transcript (and potentially screen captures) into beautifully formatted Markdown notes.
@@ -154,7 +210,8 @@ app.post('/api/generate-notes', async (req, res) => {
           4. ${lengthInstruction}
           5. Correct any obvious transcription errors (e.g. "note yes" -> "Node.js").
           6. CRITICAL: Output absolutely zero conversational filler. Output only Markdown.
-          7. If explaining complex relationships, instructions, or step-by-step processes, optionally include a Mermaid diagram using the \`\`\`mermaid code block syntax to visualize it.
+          7. CRITICAL ANTI-HALLUCINATION: DO NOT hallucinate code snippets (e.g. JavaScript, Python) unless the specific programming language and code was explicitly discussed in the transcript. If providing code examples, ensure they strictly match the domain of the lecture (e.g., if discussing Java EE, only output Java/JSP).
+          8. If explaining complex relationships, instructions, or step-by-step processes, optionally include a Mermaid diagram using the \`\`\`mermaid code block syntax to visualize it.
              CRITICAL FOR MERMAID SYNTAX:
              - Always use double quotes for node labels containing spaces, parentheses, brackets, or special characters. Example: A["My Label"] instead of A[My Label].
              - Never use HTML tags inside labels.
@@ -207,10 +264,12 @@ app.post('/api/transcribe-audio', async (req, res) => {
 
     fs.writeFileSync(tempFilePath, audioBuffer);
 
-    const transcription = await groq.audio.transcriptions.create({
-      file: fs.createReadStream(tempFilePath),
-      model: 'whisper-large-v3',
-      response_format: 'json',
+    const transcription = await executeWithGroqPool(async (groqClient) => {
+      return await groqClient.audio.transcriptions.create({
+        file: fs.createReadStream(tempFilePath),
+        model: 'whisper-large-v3',
+        response_format: 'json',
+      });
     });
 
     if (transcription.text) {
