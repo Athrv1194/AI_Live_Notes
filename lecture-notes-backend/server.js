@@ -138,16 +138,27 @@ async function executeWithGroqPool(actionFn) {
   }
 }
 
-async function generateWithRetry(messages, model, temperature) {
-  return await executeWithGroqPool(async (groqClient) => {
-    const chatCompletion = await groqClient.chat.completions.create({
-      messages,
-      model,
-      temperature,
-      max_tokens: 1500,
-    });
-    return chatCompletion.choices[0]?.message?.content || "";
-  });
+async function generateWithRetry(messages, modelsArray, temperature) {
+  for (let i = 0; i < modelsArray.length; i++) {
+    const currentModel = modelsArray[i];
+    try {
+      return await executeWithGroqPool(async (groqClient) => {
+        const chatCompletion = await groqClient.chat.completions.create({
+          messages,
+          model: currentModel,
+          temperature,
+          max_tokens: 1500,
+        });
+        return chatCompletion.choices[0]?.message?.content || "";
+      });
+    } catch (error) {
+      console.log(`⚠️ Model ${currentModel} failed with error: ${error.status || error.message}`);
+      if (i === modelsArray.length - 1) {
+        throw error; // Throw if it's the last fallback
+      }
+      console.log(`🔄 Switching to fallback model: ${modelsArray[i + 1]}...`);
+    }
+  }
 }
 
 app.post('/api/generate-notes', async (req, res) => {
@@ -160,9 +171,12 @@ app.post('/api/generate-notes', async (req, res) => {
 
     console.log("⚡ Generating notes at lightning speed with Groq...");
     
-    const aiModel = images.length > 0 ? "meta-llama/llama-4-scout-17b-16e-instruct" : "llama-3.1-8b-instant";
+    const aiModels = images.length > 0 
+      ? ["meta-llama/llama-4-scout-17b-16e-instruct", "meta-llama/llama-4-maverick-17b-128e-instruct"] 
+      : ["llama-3.1-8b-instant", "llama-3.3-70b-versatile", "qwen/qwen3-32b"];
+      
     if (images.length > 0) {
-      console.log(`👁️ Vision Mode Enabled: Received ${images.length} screenshots. Using ${aiModel}`);
+      console.log(`👁️ Vision Mode Enabled: Received ${images.length} screenshots. Using ${aiModels[0]}`);
     }
 
     // 6000 characters is roughly ~1500 tokens. With max_tokens 1500, we request ~3000 tokens total per chunk.
@@ -233,7 +247,7 @@ app.post('/api/generate-notes', async (req, res) => {
            content: (images.length > 0 && i === chunks.length - 1) ? contentArray : `Transcript Chunk:\n${chunks[i]}`
          }
        ];
-       const notesPart = await generateWithRetry(messages, aiModel, 0.5);
+       const notesPart = await generateWithRetry(messages, aiModels, 0.5);
       res.write(notesPart + "\n\n");
     }
 

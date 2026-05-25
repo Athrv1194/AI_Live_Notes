@@ -1062,10 +1062,10 @@ const App = () => {
         </div>
 
         {/* Content Area */}
-        <div className="flex-1 flex px-8 pb-8 gap-8 overflow-hidden">
+        <div className="flex-1 flex flex-col xl:flex-row px-4 md:px-8 pb-8 gap-8 overflow-y-auto xl:overflow-hidden">
           
           {/* Left Column (Visualizer & Transcript) */}
-          <div className="flex-[0.6] flex flex-col gap-6 h-full min-h-0">
+          <div className="flex-none xl:flex-[0.6] flex flex-col gap-6 xl:h-full min-h-0">
 
             {/* Audio Input Box */}
             <div className="bg-panel rounded-2xl p-6 h-[280px] flex flex-col relative shadow-xl border border-gray-800">
@@ -1132,7 +1132,7 @@ const App = () => {
             </div>
 
             {/* Live Transcript Area */}
-            <div className="flex-1 bg-card rounded-2xl p-6 shadow-md border border-[#e6dac3] flex flex-col relative min-h-0">
+            <div className="flex-none xl:flex-1 bg-card rounded-2xl p-6 shadow-md border border-[#e6dac3] flex flex-col relative min-h-[400px] xl:min-h-0">
               <div className="flex justify-between items-center mb-4 pb-4 border-b border-gray-200">
                 <div className="flex items-center gap-4">
                   <h2 className="text-2xl font-serif font-bold text-gray-900">Live Transcript</h2>
@@ -1216,7 +1216,7 @@ const App = () => {
           </div>
 
           {/* Right Column (Study Notes) */}
-          <div className="flex-[0.4] bg-card rounded-2xl shadow-md border border-[#e6dac3] flex flex-col relative h-full min-h-0 overflow-hidden">
+          <div className="flex-none xl:flex-[0.4] bg-card rounded-2xl shadow-md border border-[#e6dac3] flex flex-col relative xl:h-full min-h-[600px] xl:min-h-0 overflow-hidden mt-8 xl:mt-0">
             <div className="p-6 border-b border-gray-200">
               <div className="flex justify-between items-start mb-2">
                 <div>
