@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Mic, MicOff, FileText, Loader2, Upload, Download, ScreenShare, ScreenShareOff, Trash2, LayoutGrid, Search, Server, MonitorUp, Share2, StopCircle, MessageSquare, Zap, RotateCcw, Radio, Sparkles, Clock, AlertCircle, X } from 'lucide-react';
+import { Mic, MicOff, FileText, Loader2, Upload, Download, ScreenShare, ScreenShareOff, Trash2, LayoutGrid, Search, Server, MonitorUp, Share2, StopCircle, MessageSquare, Zap, RotateCcw, Radio, Sparkles, Clock, AlertCircle, X, CheckCircle, Cpu } from 'lucide-react';
 import mermaid from 'mermaid';
 import Dashboard from './components/Dashboard';
 import DocumentModal from './components/DocumentModal';
@@ -31,10 +31,7 @@ const Mermaid = ({ chart }) => {
       const cleanChart = chart.trim()
         .replace(/-->\|([^|]+)\|>/g, '-->|$1|')
         .replace(/-\.->\|([^|]+)\|>/g, '-.->|$1|')
-        .replace(/==>\|([^|]+)\|>/g, '==>|$1|')
-        .replace(/\[([^"\]]+)\]/g, '["$1"]') // Fix unquoted square bracket labels
-        .replace(/\(([^")]+)\)/g, '("$1")')  // Fix unquoted parentheses labels
-        .replace(/\{([^"}]+)\}/g, '{"$1"}'); // Fix unquoted curly brace labels
+        .replace(/==>\|([^|]+)\|>/g, '==>|$1|');
 
       // Check syntax first before trying to render
       mermaid.parse(cleanChart)
@@ -70,6 +67,91 @@ const Mermaid = ({ chart }) => {
   return <div ref={ref} className="mermaid flex justify-center my-4 overflow-x-auto w-full" />;
 };
 
+const playTickSound = () => {
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(600, audioCtx.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(300, audioCtx.currentTime + 0.1);
+    
+    gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+    gainNode.gain.linearRampToValueAtTime(0.4, audioCtx.currentTime + 0.01);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+    
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+    
+    oscillator.start(audioCtx.currentTime);
+    oscillator.stop(audioCtx.currentTime + 0.1);
+  } catch(e) { console.warn('Audio play failed', e); }
+};
+
+const playSuccessChime = () => {
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    
+    const playNote = (frequency, startTime, duration) => {
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(frequency, startTime);
+      
+      gainNode.gain.setValueAtTime(0, startTime);
+      gainNode.gain.linearRampToValueAtTime(0.1, startTime + 0.05);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      oscillator.start(startTime);
+      oscillator.stop(startTime + duration);
+    };
+    
+    const now = audioCtx.currentTime;
+    playNote(523.25, now, 0.4); // C5
+    playNote(659.25, now + 0.1, 0.4); // E5
+    playNote(783.99, now + 0.2, 0.6); // G5
+  } catch(e) { console.warn('Audio play failed', e); }
+};
+
+const chunkText = (text, maxChars) => {
+  const chunks = [];
+  let currentChunk = '';
+  const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+
+  for (let sentence of sentences) {
+    sentence = sentence.trim();
+    if (!sentence) continue;
+
+    if (sentence.length > maxChars) {
+      if (currentChunk) {
+        chunks.push(currentChunk.trim());
+        currentChunk = '';
+      }
+      let start = 0;
+      while (start < sentence.length) {
+        chunks.push(sentence.slice(start, start + maxChars).trim());
+        start += maxChars;
+      }
+    } else if (currentChunk.length + sentence.length > maxChars) {
+      chunks.push(currentChunk.trim());
+      currentChunk = sentence + ' ';
+    } else {
+      currentChunk += sentence + ' ';
+    }
+  }
+
+  if (currentChunk.trim()) {
+    chunks.push(currentChunk.trim());
+  }
+
+  return chunks;
+};
+
 const App = () => {
   const [currentView, setCurrentView] = useState('live');
   const [isDocumentModalOpen, setIsDocumentModalOpen] = useState(false);
@@ -90,6 +172,23 @@ const App = () => {
   const [recordingTime, setRecordingTime] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
   const [captureError, setCaptureError] = useState('');
+  
+  const [toasts, setToasts] = useState([]);
+
+  const addToast = useCallback((toast) => {
+    setToasts(prev => [...prev, { ...toast }]);
+  }, []);
+
+  const updateToast = useCallback((id, updates) => {
+    setToasts(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
+  }, []);
+
+  const removeToast = useCallback((id) => {
+    setToasts(prev => prev.map(t => t.id === id ? { ...t, isClosing: true } : t));
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 400);
+  }, []);
 
   // New State for Persistence and User Profile
   const [sessions, setSessions] = useState([]);
@@ -98,6 +197,7 @@ const App = () => {
 
   const recognitionRef = useRef(null);
   const lastProcessedIndex = useRef(0);
+  const lastPlayedChunkRef = useRef(0);
   const isGeneratingRef = useRef(false);
   const savedGenerateNotes = useRef();
   const fileInputRef = useRef(null);
@@ -765,8 +865,16 @@ const App = () => {
       return;
     }
 
-    const estimatedChunks = Math.ceil(newChunk.length / 6000);
+    const estimatedChunks = chunkText(newChunk, 6000).length;
     const estimatedSeconds = estimatedChunks * 15; // Approx 15s per chunk taking rate limits into account
+
+    addToast({
+      id: 'processing-toast',
+      type: 'processing',
+      currentChunk: 1,
+      totalChunks: estimatedChunks,
+      progressPct: 0
+    });
 
     setIsGenerating(true);
     isGeneratingRef.current = true;
@@ -777,10 +885,25 @@ const App = () => {
 
     // Smooth simulated progress
     let elapsed = 0;
+    lastPlayedChunkRef.current = 1;
+    playTickSound(); // initial sound for chunk 1
+    
     progressIntervalRef.current = setInterval(() => {
       elapsed += 0.5;
       const pct = Math.min(95, Math.floor((elapsed / estimatedSeconds) * 100));
       setGenerationProgress(pct);
+      
+      const chunkNum = Math.max(1, Math.min(estimatedChunks, Math.ceil((pct / 100) * estimatedChunks)));
+      
+      if (chunkNum > lastPlayedChunkRef.current) {
+        playTickSound();
+        lastPlayedChunkRef.current = chunkNum;
+      }
+      
+      updateToast('processing-toast', { 
+        currentChunk: chunkNum, 
+        progressPct: pct 
+      });
     }, 500);
 
     const longProcessTimeout = setTimeout(() => {
@@ -832,6 +955,16 @@ const App = () => {
 
       // 4. Update index only when fully done
       lastProcessedIndex.current = currentTranscriptLength;
+      
+      playSuccessChime();
+      const successId = 'success-' + Date.now();
+      addToast({
+        id: successId,
+        type: 'success'
+      });
+      
+      setTimeout(() => removeToast('processing-toast'), 1500);
+      setTimeout(() => removeToast(successId), 6500);
 
     } catch (error) {
       if (error.name === 'AbortError') {
@@ -840,6 +973,7 @@ const App = () => {
         console.error("AI Error:", error);
         alert("Error generating notes: " + error.message);
       }
+      removeToast('processing-toast');
     } finally {
       clearTimeout(longProcessTimeout);
       clearInterval(progressIntervalRef.current);
@@ -1062,10 +1196,10 @@ const App = () => {
         </div>
 
         {/* Content Area */}
-        <div className="flex-1 flex flex-col xl:flex-row px-4 md:px-8 pb-8 gap-8 overflow-y-auto xl:overflow-hidden">
+        <div className="flex-1 flex flex-col xl:flex-row px-4 md:px-8 pb-8 gap-8 overflow-y-auto">
           
           {/* Left Column (Visualizer & Transcript) */}
-          <div className="flex-none xl:flex-[0.6] flex flex-col gap-6 xl:h-full min-h-0">
+          <div className="flex-1 xl:flex-[0.6] flex flex-col gap-6 xl:h-full min-h-0">
 
             {/* Audio Input Box */}
             <div className="bg-panel rounded-2xl p-6 h-[280px] flex flex-col relative shadow-xl border border-gray-800">
@@ -1132,7 +1266,7 @@ const App = () => {
             </div>
 
             {/* Live Transcript Area */}
-            <div className="flex-none xl:flex-1 bg-card rounded-2xl p-6 shadow-md border border-[#e6dac3] flex flex-col relative min-h-[400px] xl:min-h-0">
+            <div className="flex-1 bg-card rounded-2xl p-6 shadow-md border border-[#e6dac3] flex flex-col relative min-h-[400px]">
               <div className="flex justify-between items-center mb-4 pb-4 border-b border-gray-200">
                 <div className="flex items-center gap-4">
                   <h2 className="text-2xl font-serif font-bold text-gray-900">Live Transcript</h2>
@@ -1181,7 +1315,7 @@ const App = () => {
             <div className="grid grid-cols-3 gap-4 mb-6">
               <div className="bg-card rounded-2xl p-5 shadow-sm border border-[#e6dac3] border-b-4 border-b-indigo-500 overflow-hidden">
                 <div className="flex justify-between items-start mb-2">
-                  <span className="text-4xl font-serif font-bold text-gray-900">
+                  <span className="text-4xl font-sans tabular-nums font-bold text-gray-900">
                     {wordCount}
                   </span>
                   {(isRecording || isSystemCapturing) && (
@@ -1194,7 +1328,7 @@ const App = () => {
               </div>
               <div className="bg-card rounded-2xl p-5 shadow-sm border border-[#e6dac3] border-b-4 border-b-amber-500 overflow-hidden">
                 <div className="flex justify-between items-start mb-2">
-                  <span className="text-4xl font-serif font-bold text-gray-900">
+                  <span className="text-4xl font-sans tabular-nums font-bold text-gray-900">
                     {notes.includes('### Your AI notes') ? 0 : (notes.split('## ').length - 1 || 0)}
                   </span>
                   <span className="text-[10px] font-bold text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded uppercase flex items-center gap-1">
@@ -1205,7 +1339,7 @@ const App = () => {
               </div>
               <div className="bg-card rounded-2xl p-5 shadow-sm border border-[#e6dac3] border-b-4 border-b-blue-500 overflow-hidden">
                 <div className="flex justify-between items-start mb-2">
-                  <span className="text-4xl font-serif font-bold text-gray-900 flex items-baseline">
+                  <span className="text-4xl font-sans tabular-nums font-bold text-gray-900 flex items-baseline">
                     {Math.floor(recordingTime / 60)}<span className="text-lg text-gray-500">m</span>
                   </span>
                 </div>
@@ -1216,7 +1350,7 @@ const App = () => {
           </div>
 
           {/* Right Column (Study Notes) */}
-          <div className="flex-none xl:flex-[0.4] bg-card rounded-2xl shadow-md border border-[#e6dac3] flex flex-col relative xl:h-full min-h-[600px] xl:min-h-0 overflow-hidden mt-8 xl:mt-0">
+          <div className="flex-1 xl:flex-[0.4] bg-card rounded-2xl shadow-md border border-[#e6dac3] flex flex-col relative xl:h-full min-h-[500px] xl:min-h-0 overflow-hidden mt-8 xl:mt-0">
             <div className="p-6 border-b border-gray-200">
               <div className="flex justify-between items-start mb-2">
                 <div>
@@ -1419,6 +1553,85 @@ const App = () => {
       />
       <video ref={hiddenVideoRef} autoPlay muted playsInline style={{ display: 'none' }} />
       <canvas ref={captureCanvasRef} style={{ display: 'none' }} />
+
+      {/* Toast Container */}
+      <div className="fixed top-24 right-4 z-50 flex flex-col gap-4 pointer-events-none">
+        {toasts.map((toast) => {
+          if (toast.type === 'processing') {
+            return (
+              <div 
+                key={toast.id}
+                className={`w-[320px] bg-[#f2f7f4] border border-[#d1e6db] shadow-lg rounded-[14px] overflow-hidden pointer-events-auto transition-all duration-400 transform origin-right ${
+                  toast.isClosing ? 'opacity-0 translate-x-[120%]' : 'animate-slide-in-right'
+                }`}
+              >
+                <div className="p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-[10px] bg-[#e1f0e8] border border-[#c5e0d1] flex items-center justify-center flex-shrink-0">
+                      <Cpu size={20} className="text-[#387c5a]" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-bold text-gray-900 text-[15px]">Processing chunk {toast.currentChunk} of {toast.totalChunks}</h4>
+                      <p className="text-[13px] font-medium text-gray-500 mt-0.5">AI is structuring your notes...</p>
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <div className="flex justify-between items-center mb-1.5">
+                      <span className="text-[10px] font-bold tracking-widest text-[#498767] uppercase">Progress</span>
+                      <span className="text-[11px] font-bold text-[#356e50]">{toast.currentChunk} / {toast.totalChunks} chunks</span>
+                    </div>
+                    <div className="w-full bg-[#daebd6] rounded-full h-1.5 overflow-hidden">
+                      <div className="bg-[#488e63] h-full rounded-full transition-all duration-300 ease-out" style={{ width: `${toast.progressPct}%` }}></div>
+                    </div>
+                    <div className="flex gap-1 mt-2">
+                      {[...Array(toast.totalChunks)].map((_, i) => (
+                        <div key={i} className={`h-[5px] w-[5px] rounded-full ${i < toast.currentChunk ? 'bg-[#488e63]' : 'bg-[#daebd6]'}`}></div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          if (toast.type === 'success') {
+            const sectionCount = notes.includes('### Your AI notes') ? 0 : (notes.split('## ').length - 1 || 0);
+            const wordCountVal = notes.includes('### Your AI notes') ? 0 : notes.split(/\s+/).filter(w => w.length > 0).length;
+            return (
+              <div 
+                key={toast.id}
+                className={`w-[320px] bg-[#fdfaf3] border border-[#f5ead2] shadow-lg rounded-[14px] overflow-hidden pointer-events-auto transition-all duration-400 transform origin-right ${
+                  toast.isClosing ? 'opacity-0 translate-x-[120%]' : 'animate-slide-in-right'
+                }`}
+              >
+                <div className="p-4">
+                  <div className="flex items-start gap-3 relative">
+                    <div className="w-10 h-10 rounded-[10px] bg-[#faebd4] border border-[#f0d4ac] flex items-center justify-center flex-shrink-0">
+                      <Sparkles size={20} className="text-[#d97c36]" />
+                    </div>
+                    <div className="flex-1 min-w-0 pr-6">
+                      <h4 className="font-bold text-gray-900 text-[15px]">Notes generated!</h4>
+                      <p className="text-[13px] font-medium text-gray-500 mt-0.5">Your study notes are ready to review.</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex items-center justify-between">
+                    <div className="flex gap-2">
+                      <span className="flex items-center gap-1.5 px-2.5 py-1 bg-[#e4f2ec] text-[#3e785b] rounded-lg text-xs font-bold border border-[#d1e6dc]">
+                        <FileText size={14} /> {sectionCount} sections
+                      </span>
+                      <span className="flex items-center gap-1.5 px-2.5 py-1 bg-[#fef1e3] text-[#d07525] rounded-lg text-xs font-bold border border-[#fae2c8]">
+                        <Clock size={14} /> {wordCountVal} words
+                      </span>
+                    </div>
+                    <span className="text-[11px] font-bold text-gray-400">Just now</span>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+          return null;
+        })}
+      </div>
     </div>
   );
 };

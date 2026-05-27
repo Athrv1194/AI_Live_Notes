@@ -251,6 +251,7 @@ app.post('/api/generate-notes', async (req, res) => {
       res.write(notesPart + "\n\n");
     }
 
+    console.log("✅ Generating notes completed");
     res.end();
 
   } catch (error) {
