@@ -206,6 +206,7 @@ app.post('/api/generate-notes', async (req, res) => {
       if (isCancelled) break;
       
       console.log(`Processing chunk ${i + 1}/${chunks.length}...`);
+      res.write(`<!-- STARTING_CHUNK: ${i + 1} -->\n`);
       
       const imagesToSend = images.slice(-2); // Send max 2 recent unique slides to prevent token limit explosion
        
@@ -248,7 +249,7 @@ app.post('/api/generate-notes', async (req, res) => {
          }
        ];
        const notesPart = await generateWithRetry(messages, aiModels, 0.5);
-      res.write(notesPart + "\n\n");
+      res.write(notesPart + `\n\n<!-- FINISHED_CHUNK: ${i + 1} -->\n\n`);
     }
 
     console.log("✅ Generating notes completed");

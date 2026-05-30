@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Mic, MicOff, FileText, Loader2, Upload, Download, ScreenShare, ScreenShareOff, Trash2, LayoutGrid, Search, Server, MonitorUp, Share2, StopCircle, MessageSquare, Zap, RotateCcw, Radio, Sparkles, Clock, AlertCircle, X, CheckCircle, Cpu } from 'lucide-react';
+import { Mic, MicOff, FileText, Loader2, Upload, Download, ScreenShare, ScreenShareOff, Trash2, LayoutGrid, Search, Server, MonitorUp, Share2, StopCircle, MessageSquare, Zap, RotateCcw, Radio, Sparkles, Clock, AlertCircle, X, CheckCircle, Cpu, Eye, Camera } from 'lucide-react';
 import mermaid from 'mermaid';
 import Dashboard from './components/Dashboard';
 import DocumentModal from './components/DocumentModal';
@@ -152,6 +152,14 @@ const chunkText = (text, maxChars) => {
   return chunks;
 };
 
+const playSound = (name) => {
+  try {
+    const audio = new Audio(`/sound-effects/${name}.wav`);
+    audio.volume = 0.5; // Adjust volume as necessary
+    audio.play().catch(e => console.warn('Audio play failed', e));
+  } catch(e) { console.warn('Audio initialization failed', e); }
+};
+
 const App = () => {
   const [currentView, setCurrentView] = useState('live');
   const [isDocumentModalOpen, setIsDocumentModalOpen] = useState(false);
@@ -172,6 +180,11 @@ const App = () => {
   const [recordingTime, setRecordingTime] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
   const [captureError, setCaptureError] = useState('');
+  const [visionCountdown, setVisionCountdown] = useState(30);
+  const [visionCaptureCount, setVisionCaptureCount] = useState(0);
+  const [autoStopTime, setAutoStopTime] = useState('');
+  const [autoStopTimeInput, setAutoStopTimeInput] = useState('');
+  const [autoStoppedTime, setAutoStoppedTime] = useState('');
   
   const [toasts, setToasts] = useState([]);
 
@@ -388,6 +401,40 @@ const App = () => {
     setIsRecording(!isRecording);
   };
 
+  // Auto-Stop Scheduler logic
+  useEffect(() => {
+    if (!autoStopTime) return;
+    if (!isRecording && !isSystemCapturing) return;
+
+    const checkInterval = setInterval(() => {
+      const now = new Date();
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const currentTime = `${hours}:${minutes}`;
+
+      if (currentTime === autoStopTime) {
+        console.log(`Auto-stop time ${autoStopTime} reached. Stopping capture.`);
+        if (isSystemCapturing) {
+          stopSystemCapture();
+        }
+        if (isRecording) {
+          recognitionRef.current?.stop();
+          setIsRecording(false);
+        }
+        playSound('time-hit-zero');
+        setAutoStoppedTime(autoStopTime);
+        setAutoStopTime('');
+        
+        // Auto-generate notes if there is transcript
+        if (transcript.length > 50 && savedGenerateNotes.current) {
+          savedGenerateNotes.current();
+        }
+      }
+    }, 1000);
+
+    return () => clearInterval(checkInterval);
+  }, [autoStopTime, isRecording, isSystemCapturing, transcript]);
+
   // Dynamic Vision Toggle Handler
   useEffect(() => {
     if (isVisionEnabled && isSystemCapturing && systemStreamRef.current) {
@@ -395,16 +442,29 @@ const App = () => {
         hiddenVideoRef.current.srcObject = systemStreamRef.current;
       }
       if (!visionIntervalRef.current) {
-        // Capture first frame immediately after 1s, then every 30s
-        setTimeout(() => captureFrame(), 1000);
-        visionIntervalRef.current = setInterval(() => {
+        playSound('vision-mode-active');
+        setVisionCountdown(30);
+        // Capture first frame immediately after 1s
+        setTimeout(() => {
           captureFrame();
-        }, 30000);
+          setVisionCountdown(30);
+        }, 1000);
+        
+        visionIntervalRef.current = setInterval(() => {
+          setVisionCountdown(prev => {
+            if (prev <= 1) {
+              captureFrame();
+              return 30;
+            }
+            return prev - 1;
+          });
+        }, 1000);
       }
     } else {
       if (visionIntervalRef.current) {
         clearInterval(visionIntervalRef.current);
         visionIntervalRef.current = null;
+        setVisionCountdown(30);
       }
       if (hiddenVideoRef.current) {
         hiddenVideoRef.current.srcObject = null;
@@ -532,6 +592,20 @@ const App = () => {
     if (lastFrame !== base64Image) {
       visionFramesRef.current.push(base64Image);
       console.log("📸 Vision: Captured new unique slide/screen.");
+      
+      const currentCount = visionFramesRef.current.length;
+      setVisionCaptureCount(currentCount);
+      
+      const toastId = 'vision-capture-' + Date.now() + '-' + Math.random().toString(36).substring(7);
+      playSound('camera-captured');
+      
+      addToast({
+        id: toastId,
+        type: 'vision-capture',
+        captureNumber: currentCount
+      });
+      
+      setTimeout(() => removeToast(toastId), 3000);
     }
   };
 
@@ -883,28 +957,7 @@ const App = () => {
     setGenerationProgress(0);
     setGenerationStatus(estimatedChunks > 1 ? `Processing (~${estimatedSeconds}s)` : 'Processing...');
 
-    // Smooth simulated progress
-    let elapsed = 0;
-    lastPlayedChunkRef.current = 1;
-    playTickSound(); // initial sound for chunk 1
-    
-    progressIntervalRef.current = setInterval(() => {
-      elapsed += 0.5;
-      const pct = Math.min(95, Math.floor((elapsed / estimatedSeconds) * 100));
-      setGenerationProgress(pct);
-      
-      const chunkNum = Math.max(1, Math.min(estimatedChunks, Math.ceil((pct / 100) * estimatedChunks)));
-      
-      if (chunkNum > lastPlayedChunkRef.current) {
-        playTickSound();
-        lastPlayedChunkRef.current = chunkNum;
-      }
-      
-      updateToast('processing-toast', { 
-        currentChunk: chunkNum, 
-        progressPct: pct 
-      });
-    }, 500);
+    lastPlayedChunkRef.current = 0;
 
     const longProcessTimeout = setTimeout(() => {
       setIsRateLimited(true);
@@ -946,17 +999,50 @@ const App = () => {
         return prevNotes + '\n\n---\n\n';
       });
 
+      let accumulatedText = "";
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         const chunkText = decoder.decode(value, { stream: true });
-        setNotes((prev) => prev + chunkText);
+        accumulatedText += chunkText;
+        
+        const startMatches = [...accumulatedText.matchAll(/<!-- STARTING_CHUNK: (\d+) -->/g)];
+        if (startMatches.length > 0) {
+          const chunkNum = parseInt(startMatches[startMatches.length - 1][1], 10);
+          if (chunkNum > lastPlayedChunkRef.current) {
+            playSound('chunk-processing');
+            lastPlayedChunkRef.current = chunkNum;
+            const pct = Math.max(5, Math.floor(((chunkNum - 0.5) / estimatedChunks) * 100));
+            setGenerationProgress(pct);
+            updateToast('processing-toast', { 
+              currentChunk: chunkNum, 
+              progressPct: pct 
+            });
+          }
+        }
+        
+        const finishMatches = [...accumulatedText.matchAll(/<!-- FINISHED_CHUNK: (\d+) -->/g)];
+        if (finishMatches.length > 0) {
+          const chunkNum = parseInt(finishMatches[finishMatches.length - 1][1], 10);
+          const pct = Math.floor((chunkNum / estimatedChunks) * 100);
+          setGenerationProgress(pct);
+          updateToast('processing-toast', { 
+            progressPct: pct 
+          });
+        }
+
+        let cleanedChunkText = chunkText.replace(/<!-- STARTING_CHUNK: \d+ -->\n?/g, '')
+                                        .replace(/<!-- FINISHED_CHUNK: \d+ -->\n?/g, '');
+        if (cleanedChunkText) {
+          setNotes((prev) => prev + cleanedChunkText);
+        }
       }
 
       // 4. Update index only when fully done
       lastProcessedIndex.current = currentTranscriptLength;
       
-      playSuccessChime();
+      playSound('notes-generated');
       const successId = 'success-' + Date.now();
       addToast({
         id: successId,
@@ -1262,6 +1348,71 @@ const App = () => {
                 <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all border bg-[#29171a] border-[#402328] text-rose-400 hover:bg-[#331c20]">
                   <FileText size={16} /> Upload Transcript
                 </button>
+                <div className="flex items-center ml-1">
+                  {autoStoppedTime ? (
+                    <div className="flex items-center gap-2 border border-[#8f3f3f] bg-[#2a1a1a] rounded-lg p-1.5 px-3">
+                      <div className="relative flex items-center justify-center">
+                        <Clock size={16} className="text-[#d46b6b]" />
+                        <div className="absolute -bottom-1 -right-1 w-2.5 h-2.5 bg-[#2a1a1a] rounded-sm flex items-center justify-center">
+                          <div className="w-1.5 h-1.5 bg-[#d46b6b] rounded-[1px]"></div>
+                        </div>
+                      </div>
+                      <span className="text-[#d46b6b] font-bold text-[15px]">Auto-stopped {autoStoppedTime}</span>
+                      <button onClick={() => setAutoStoppedTime('')} className="ml-1 text-[#d46b6b] hover:text-white transition-colors">
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ) : autoStopTime ? (
+                    <div className="flex items-center gap-3 border border-[#b87a3d] bg-[#1a1b1e] rounded-lg p-1.5 px-3 relative overflow-hidden">
+                      <div className="flex items-center gap-2 z-10">
+                        <Clock size={16} className="text-[#b87a3d]" />
+                        <span className="text-[#b87a3d] font-bold text-[15px] tracking-wide">{autoStopTime}</span>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          playSound('time-cancelled');
+                          setAutoStopTime('');
+                        }}
+                        className="bg-[#25262b] hover:bg-[#2c2d33] border border-[#373a40] text-white font-bold rounded px-3 py-1 text-xs transition-colors z-10"
+                      >
+                        Cancel
+                      </button>
+                      <div className="absolute bottom-0 left-0 h-[2px] bg-[#b87a3d] animate-pulse w-full origin-left transform scale-x-50"></div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 border border-[#b87a3d] bg-[#1a1b1e] rounded-lg p-1 px-1.5">
+                      <Clock size={16} className="text-[#b87a3d] ml-1.5" />
+                      <input
+                        type="time"
+                        value={autoStopTimeInput}
+                        onChange={(e) => setAutoStopTimeInput(e.target.value)}
+                        className="text-[15px] font-bold bg-[#25262b] text-white border border-[#373a40] rounded px-3 py-1 focus:outline-none focus:border-[#b87a3d] transition-all [color-scheme:dark] min-w-[110px] text-center"
+                        title="Set Auto-Stop Time"
+                      />
+                      {autoStopTimeInput && (
+                        <button 
+                          onClick={() => {
+                            playSound('time-set-confirmed');
+                            setAutoStopTime(autoStopTimeInput);
+                            setAutoStopTimeInput('');
+                          }}
+                          className="bg-[#25262b] hover:bg-[#2c2d33] border border-[#373a40] text-white font-bold rounded px-3 py-1 text-xs transition-colors"
+                        >
+                          SET
+                        </button>
+                      )}
+                      <button 
+                        onClick={() => {
+                          playSound('time-cancelled');
+                          setAutoStopTimeInput('');
+                        }}
+                        className="bg-[#25262b] hover:bg-[#2c2d33] border border-[#373a40] text-gray-400 hover:text-white rounded px-1.5 py-1 transition-colors"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1556,6 +1707,66 @@ const App = () => {
 
       {/* Toast Container */}
       <div className="fixed top-24 right-4 z-50 flex flex-col gap-4 pointer-events-none">
+        
+        {/* Vision Mode Active Persistent Toast */}
+        {isVisionEnabled && isSystemCapturing && (
+          <div className="w-[320px] bg-[#fdfdfd] border border-[#e5e5ea] shadow-lg rounded-[14px] overflow-hidden pointer-events-auto animate-slide-in-right">
+            <div className="p-4 relative">
+              <button onClick={() => setIsVisionEnabled(false)} className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 bg-gray-100 rounded-full p-1 transition-colors">
+                <X size={14} />
+              </button>
+              <div className="flex items-start gap-3">
+                <div className="w-12 h-12 rounded-[12px] bg-[#efe9fe] border border-[#d8cbf9] flex items-center justify-center flex-shrink-0">
+                  <Eye size={24} className="text-[#e65c00] fill-[#ffeed4]" />
+                </div>
+                <div className="flex-1 min-w-0 pt-0.5">
+                  <h4 className="font-bold text-gray-900 text-[15px]">Vision Mode — Active</h4>
+                  <p className="text-[13px] font-medium text-gray-500 mt-0.5">Capturing screen every 30s</p>
+                </div>
+              </div>
+              <div className="mt-4 flex items-center gap-3">
+                <div className="relative w-10 h-10 flex-shrink-0 flex items-center justify-center">
+                  <svg className="w-10 h-10 transform -rotate-90" viewBox="0 0 36 36">
+                    <path className="text-gray-200 stroke-current" strokeWidth="3" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                    <path className="text-[#6445e8] stroke-current transition-all duration-1000 ease-linear" strokeWidth="3" strokeDasharray={`${(visionCountdown / 30) * 100}, 100`} fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                  </svg>
+                  <span className="absolute text-[11px] font-bold text-[#4c2bb8]">{visionCountdown}s</span>
+                </div>
+                <div className="flex-1">
+                  <div className="text-[10px] font-bold tracking-widest text-[#6445e8] uppercase mb-1.5 flex items-center gap-1.5">
+                    <div className="w-1.5 h-1.5 bg-[#6445e8] rounded-full animate-pulse"></div>
+                    NEXT CAPTURE IN {visionCountdown}S
+                  </div>
+                  <div className="flex gap-1.5">
+                    {[...Array(Math.min(3, visionCaptureCount))].map((_, i) => (
+                      <div key={i} className="w-[30px] h-[18px] bg-[#b79dff] opacity-60 rounded border border-[#8a63f5]"></div>
+                    ))}
+                    {visionCaptureCount > 3 && (
+                      <div className="w-[30px] h-[18px] bg-[#f5f1ed] rounded border border-[#e2d8cd] flex items-center justify-center text-[10px] font-bold text-gray-500">
+                        +{visionCaptureCount - 3}
+                      </div>
+                    )}
+                    {visionCaptureCount === 0 && (
+                      <div className="text-xs text-gray-400 font-medium">Waiting for first capture...</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="bg-[#fbfafd] px-4 py-2 border-t border-[#f0ebfc] flex justify-between items-center">
+              <span className="text-[10px] font-bold text-gray-400 tracking-wider flex items-center gap-1.5">
+                <span className="flex gap-0.5">
+                  <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
+                  <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
+                  <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
+                </span>
+                FEEDING TO AI
+              </span>
+              <span className="px-2 py-0.5 bg-[#eae2ff] text-[#6445e8] font-bold text-[10px] rounded-full border border-[#d2c2ff]">VISION AI</span>
+            </div>
+          </div>
+        )}
+
         {toasts.map((toast) => {
           if (toast.type === 'processing') {
             return (
@@ -1625,6 +1836,43 @@ const App = () => {
                     </div>
                     <span className="text-[11px] font-bold text-gray-400">Just now</span>
                   </div>
+                </div>
+              </div>
+            );
+          }
+
+          if (toast.type === 'vision-capture') {
+            return (
+              <div 
+                key={toast.id}
+                className={`w-[320px] bg-[#fdfdfd] border border-[#e5e5ea] shadow-lg rounded-[14px] overflow-hidden pointer-events-auto transition-all duration-400 transform origin-right ${
+                  toast.isClosing ? 'opacity-0 translate-x-[120%]' : 'animate-slide-in-right'
+                }`}
+              >
+                <div className="p-4 relative">
+                  <button onClick={() => removeToast(toast.id)} className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 bg-gray-100 rounded-full p-1 transition-colors">
+                    <X size={14} />
+                  </button>
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-[10px] bg-[#efe9fe] border border-[#d8cbf9] flex items-center justify-center flex-shrink-0">
+                      <Camera size={20} className="text-[#111]" />
+                    </div>
+                    <div className="flex-1 min-w-0 pt-0.5">
+                      <h4 className="font-bold text-gray-900 text-[15px]">Screenshot captured</h4>
+                      <p className="text-[13px] font-medium text-gray-500 mt-0.5">Sending to AI - Capture #{toast.captureNumber}</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-[#fbfafd] px-4 py-2 border-t border-[#f0ebfc] flex justify-between items-center">
+                  <span className="text-[10px] font-bold text-gray-400 tracking-wider flex items-center gap-1.5">
+                    <span className="flex gap-0.5">
+                      <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
+                      <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
+                      <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
+                    </span>
+                    ANALYSING SLIDE CONTENT
+                  </span>
+                  <span className="px-2 py-0.5 bg-[#eae2ff] text-[#6445e8] font-bold text-[10px] rounded-full border border-[#d2c2ff]">VISION AI</span>
                 </div>
               </div>
             );
